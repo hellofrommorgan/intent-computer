@@ -158,6 +158,9 @@ export async function runSessionStartLoop(
   vaultRoot: string,
   sessionId: string,
 ): Promise<IntentLoopResult | null> {
+  // Bail immediately if the vault root doesn't exist
+  if (!existsSync(vaultRoot)) return null;
+
   const startMs = Date.now();
 
   const session = buildSessionFrame(sessionId, vaultRoot);

@@ -1361,8 +1361,11 @@ async function testSessionStartLoopFormatterProducesUsableContext(): Promise<voi
 
 async function testSessionStartLoopReturnsNullOnMissingVault(): Promise<void> {
   // Pass a non-existent vault path — the loop should return null, not throw
-  const result = await runSessionStartLoop("/tmp/definitely-does-not-exist-xyz-abc", "test-session-null");
+  const fakePath = `/tmp/no-vault-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const result = await runSessionStartLoop(fakePath, "test-session-null");
   assert(result === null, "loop should return null when vault root does not exist");
+  // Clean up in case the loop created any directories
+  rmSync(fakePath, { recursive: true, force: true });
 }
 
 async function main() {
