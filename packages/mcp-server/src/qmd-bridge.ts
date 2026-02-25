@@ -136,21 +136,35 @@ function runQmd(
   try {
     raw = execFileSync(bin, args, {
       encoding: "utf-8",
-      timeout: 15_000,
-      stdio: "pipe",
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
       // Run from vault root so relative paths resolve correctly
       cwd: vaultRoot,
     });
-  } catch {
-    return [];
+  } catch (err: unknown) {
+    // execFileSync throws if the child exits non-zero. For qmd query,
+    // stderr gets the progress tree while stdout gets the JSON. Node
+    // still throws if stderr was written to and the exit code was non-zero.
+    // Try to recover the stdout from the error object.
+    if (err && typeof err === "object" && "stdout" in err) {
+      const stdout = (err as { stdout: string | Buffer }).stdout;
+      raw = typeof stdout === "string" ? stdout : stdout?.toString("utf-8") ?? "";
+      if (!raw) return [];
+    } else {
+      return [];
+    }
   }
 
-  // qmd query (deep search) prefixes the JSON with a progress block that
-  // contains tree-drawing characters and status lines before the JSON array.
-  // Strip everything before the first '['.
-  const jsonStart = raw.indexOf("[");
+  // Strip ANSI escape sequences (OSC, CSI, etc.) before parsing.
+  // qmd query emits progress trees and terminal codes like \x1b]9;4;...
+  // that can contain '[' characters that break naive JSON detection.
+  const cleaned = raw.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
+                     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+
+  // Strip everything before the first JSON array '['.
+  const jsonStart = cleaned.indexOf("[");
   if (jsonStart === -1) return [];
-  const jsonText = raw.slice(jsonStart);
+  const jsonText = cleaned.slice(jsonStart);
 
   let parsed: QmdRawResult[];
   try {
