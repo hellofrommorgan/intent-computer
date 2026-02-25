@@ -1,0 +1,21 @@
+[Unit]
+Description=Intent Computer Vault Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=exedev
+WorkingDirectory=/home/exedev/intent-computer
+ExecStart=/usr/bin/node /home/exedev/intent-computer/packages/vault-web/dist/index.js --vault /home/exedev/Mind --port 8080
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/exedev
+Environment=PATH=/usr/bin:/usr/local/bin:/bin
+Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vault-web
+
+[Install]
+WantedBy=multi-user.target

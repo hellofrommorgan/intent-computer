@@ -1,0 +1,12 @@
+{
+    "mcpServers": {
+        "intent-computer": {
+            "command": "/usr/bin/node",
+            "args": [
+                "/home/exedev/intent-computer/packages/mcp-server/dist/index.js",
+                "--vault",
+                "/home/exedev/Mind"
+            ]
+        }
+    }
+}

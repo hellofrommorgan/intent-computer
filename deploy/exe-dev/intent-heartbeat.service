@@ -1,0 +1,18 @@
+[Unit]
+Description=Intent Computer Heartbeat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=exedev
+WorkingDirectory=/home/exedev/intent-computer
+ExecStart=/usr/bin/node /home/exedev/intent-computer/packages/heartbeat/dist/index.js --vault /home/exedev/Mind --slot auto --max-actions 3
+Environment=HOME=/home/exedev
+Environment=PATH=/usr/bin:/home/exedev/.local/bin:/usr/local/bin:/bin
+Environment=INTENT_CLAUDE_PATH=/home/exedev/.local/bin/claude
+Environment=NODE_ENV=production
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=intent-heartbeat
