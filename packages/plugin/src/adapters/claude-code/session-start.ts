@@ -3,7 +3,13 @@
  * session-start.ts — Claude Code SessionStart hook handler
  *
  * Reads vault context (identity, goals, working-memory, morning-brief) and
- * outputs it as additionalContext so Claude starts the session oriented.
+ * runs a lightweight intent loop to surface signals, commitments, and
+ * suggested actions. Outputs everything as additionalContext so Claude
+ * starts the session oriented and aware.
+ *
+ * Time budget: hard 30s hook timeout. Intent loop capped at 12s internally.
+ * The static context (identity, goals, etc.) is always included; the loop
+ * result enriches it when available.
  *
  * This replaces the OpenCode `experimental.chat.system.transform` hook.
  */
@@ -13,6 +19,8 @@ import { join } from "path";
 import { readStdin } from "./stdin.js";
 import { succeed, pass } from "./output.js";
 import { resolveVaultRoot } from "./vault.js";
+import { runSessionStartLoop } from "./intent-loop-runner.js";
+import { formatIntentLoopResult } from "./intent-loop-formatter.js";
 import type { SessionStartInput } from "./types.js";
 
 function readFileSafe(path: string): string | null {
@@ -84,25 +92,45 @@ async function main(): Promise<void> {
     sections.push(`## Morning Brief\n\n${briefContent}`);
   }
 
-  // Maintenance signals
-  const signals: string[] = [];
-  const inboxCount = countMdFiles(join(vaultRoot!, "inbox"));
-  if (inboxCount >= 3) signals.push(`${inboxCount} inbox items waiting for processing`);
-
-  const obsCount = countMdFiles(join(vaultRoot!, "ops", "observations"));
-  if (obsCount >= 10) signals.push(`${obsCount} pending observations`);
-
-  const tensionCount = countMdFiles(join(vaultRoot!, "ops", "tensions"));
-  if (tensionCount >= 5) signals.push(`${tensionCount} pending tensions`);
-
-  if (signals.length > 0) {
-    sections.push(`## Maintenance Conditions\n\n${signals.map(s => `- CONDITION: ${s}`).join("\n")}`);
-  }
-
   // Reminders
   const reminders = readFileSafe(join(vaultRoot!, "ops", "reminders.md"));
   if (reminders) {
     sections.push(`## Reminders\n\n${reminders}`);
+  }
+
+  // ─── Intent loop — lightweight ambient perception + commitment eval ──────
+  // Run after static context is assembled. If the loop fails or times out,
+  // we fall back to the legacy maintenance signals block.
+  const sessionId = input.session_id || "unknown";
+  let loopContext: string | null = null;
+
+  try {
+    const loopResult = await runSessionStartLoop(vaultRoot!, sessionId);
+    if (loopResult) {
+      loopContext = formatIntentLoopResult(loopResult);
+    }
+  } catch {
+    // Loop failure is non-fatal — static context is still useful
+    loopContext = null;
+  }
+
+  if (loopContext) {
+    sections.push(loopContext);
+  } else {
+    // Fallback: legacy maintenance signals when intent loop is unavailable
+    const signals: string[] = [];
+    const inboxCount = countMdFiles(join(vaultRoot!, "inbox"));
+    if (inboxCount >= 3) signals.push(`${inboxCount} inbox items waiting for processing`);
+
+    const obsCount = countMdFiles(join(vaultRoot!, "ops", "observations"));
+    if (obsCount >= 10) signals.push(`${obsCount} pending observations`);
+
+    const tensionCount = countMdFiles(join(vaultRoot!, "ops", "tensions"));
+    if (tensionCount >= 5) signals.push(`${tensionCount} pending tensions`);
+
+    if (signals.length > 0) {
+      sections.push(`## Maintenance Conditions\n\n${signals.map(s => `- CONDITION: ${s}`).join("\n")}`);
+    }
   }
 
   if (sections.length === 0) pass();

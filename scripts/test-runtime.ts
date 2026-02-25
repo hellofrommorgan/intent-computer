@@ -18,6 +18,8 @@ import { LocalCommitmentAdapter } from "../packages/plugin/src/adapters/local-co
 import { runHeartbeat } from "../packages/heartbeat/src/heartbeat.js";
 import { LocalMcpAdapter } from "../packages/mcp-server/src/local-adapter.js";
 import { LocalExecutionAdapter } from "../packages/plugin/src/adapters/local-execution.js";
+import { runSessionStartLoop } from "../packages/plugin/src/adapters/claude-code/intent-loop-runner.js";
+import { formatIntentLoopResult } from "../packages/plugin/src/adapters/claude-code/intent-loop-formatter.js";
 import {
   emitActionExecuted,
   emitActionProposed,
@@ -1213,6 +1215,156 @@ async function testTelemetryCorrelationChain(): Promise<void> {
   }
 }
 
+// ─── Session-start intent loop tests ─────────────────────────────────────────
+
+async function testSessionStartLoopRunsOnEmptyVault(): Promise<void> {
+  const vault = createTempVault();
+  try {
+    // An empty vault (no self/ files, no inbox items) should still return
+    // a result — perception and identity both handle missing files gracefully.
+    const result = await runSessionStartLoop(vault, "test-session-empty");
+    assert(result !== null, "session-start loop should return a result even on an empty vault");
+    assert(result!.cycleId.length > 0, "loop result should have a cycleId");
+    assert(result!.perception !== undefined, "loop result should have perception snapshot");
+    assert(result!.identity !== undefined, "loop result should have identity state");
+    assert(result!.commitment !== undefined, "loop result should have commitment plan");
+    assert(result!.plan !== undefined, "loop result should have execution plan");
+    assert(result!.outcome !== undefined, "loop result should have execution outcome");
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+}
+
+async function testSessionStartLoopDetectsInboxPressure(): Promise<void> {
+  const vault = createTempVault();
+  try {
+    // Write 5 inbox items — above the default threshold of 3
+    for (let i = 1; i <= 5; i++) {
+      writeFileSync(join(vault, "inbox", `item-${i}.md`), `# Item ${i}\nTest content`, "utf-8");
+    }
+
+    const result = await runSessionStartLoop(vault, "test-session-inbox");
+    assert(result !== null, "loop should succeed with inbox items present");
+
+    const inboxGap = result!.perception.gaps.find((g) => g.label === "inbox-pressure");
+    assert(inboxGap !== undefined, "loop should detect inbox-pressure gap when items >= threshold");
+
+    const inboxAction = result!.plan.actions.find(
+      (a) => a.actionKey === "process_inbox" || a.label.toLowerCase().includes("inbox"),
+    );
+    assert(inboxAction !== undefined, "loop should propose an inbox-processing action");
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+}
+
+async function testSessionStartLoopWritesCycleLog(): Promise<void> {
+  const vault = createTempVault();
+  try {
+    const result = await runSessionStartLoop(vault, "test-session-cycle-log");
+    assert(result !== null, "loop should succeed");
+
+    const cycleLogPath = join(vault, "ops", "runtime", "cycle-log.jsonl");
+    assert(existsSync(cycleLogPath), "cycle-log.jsonl should be written after a successful loop run");
+
+    const lines = readFileSync(cycleLogPath, "utf-8").trim().split("\n").filter(Boolean);
+    assert(lines.length >= 1, "cycle-log.jsonl should contain at least one entry");
+
+    const entry = JSON.parse(lines[lines.length - 1]!);
+    assert(entry.source === "session-start", "cycle-log entry should have source=session-start");
+    assert(typeof entry.cycleId === "string" && entry.cycleId.length > 0, "cycle-log entry should have cycleId");
+    assert(typeof entry.ts === "string", "cycle-log entry should have timestamp");
+    assert(typeof entry.intent === "string", "cycle-log entry should have intent statement");
+    assert(Array.isArray(entry.commitments), "cycle-log entry should have commitments array");
+    assert(Array.isArray(entry.actions), "cycle-log entry should have actions array");
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+}
+
+async function testSessionStartLoopWithActiveCommitments(): Promise<void> {
+  const vault = createTempVault();
+  try {
+    mkdirSync(join(vault, "self"), { recursive: true });
+    writeFileSync(
+      join(vault, "self", "goals.md"),
+      [
+        "# Goals",
+        "",
+        "## Active Threads",
+        "",
+        "- **intent computer visual identity** — Building the visual identity for intent computer.",
+        "  - Momentum: High",
+        "- **session continuity** — Improving session-to-session context preservation.",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await runSessionStartLoop(vault, "test-session-commitments");
+    assert(result !== null, "loop should succeed with goals.md present");
+    assert(
+      result!.commitment.activeCommitments.length > 0,
+      "loop should surface active commitments from goals.md",
+    );
+
+    const labels = result!.commitment.activeCommitments.map((c) => c.label);
+    assert(
+      labels.some((l) => l.toLowerCase().includes("intent computer visual identity")),
+      "commitment labels should include parsed goals.md thread",
+    );
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+}
+
+async function testSessionStartLoopFormatterProducesUsableContext(): Promise<void> {
+  const vault = createTempVault();
+  try {
+    // Write inbox items and a goals file to give the formatter real content
+    for (let i = 1; i <= 4; i++) {
+      writeFileSync(join(vault, "inbox", `item-${i}.md`), `# Item ${i}`, "utf-8");
+    }
+    mkdirSync(join(vault, "self"), { recursive: true });
+    writeFileSync(
+      join(vault, "self", "goals.md"),
+      [
+        "# Goals",
+        "",
+        "## Active Threads",
+        "",
+        "- **ambient intelligence** — Building ambient intelligence for daily use.",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await runSessionStartLoop(vault, "test-session-formatter");
+    assert(result !== null, "loop should succeed");
+
+    const formatted = formatIntentLoopResult(result!);
+    assert(formatted.length > 0, "formatter should produce non-empty output");
+    assert(
+      formatted.includes("## Session Intelligence"),
+      "formatted output should include Session Intelligence header",
+    );
+    assert(
+      formatted.includes("### Signals") || formatted.includes("### Active Commitments"),
+      "formatted output should include signal or commitment sections",
+    );
+    assert(
+      formatted.includes("### Suggested Actions"),
+      "formatted output should include Suggested Actions section",
+    );
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+}
+
+async function testSessionStartLoopReturnsNullOnMissingVault(): Promise<void> {
+  // Pass a non-existent vault path — the loop should return null, not throw
+  const result = await runSessionStartLoop("/tmp/definitely-does-not-exist-xyz-abc", "test-session-null");
+  assert(result === null, "loop should return null when vault root does not exist");
+}
+
 async function main() {
   await testCommitmentFeedbackLoop();
   await testCommitmentIgnoresAdvisoryOutcomes();
@@ -1231,7 +1383,13 @@ async function main() {
   await testExecutionDispatch();
   await testExecutionDispatchFailureTruth();
   await testTelemetryCorrelationChain();
-  console.log("Runtime integration checks passed: 17/17");
+  await testSessionStartLoopRunsOnEmptyVault();
+  await testSessionStartLoopDetectsInboxPressure();
+  await testSessionStartLoopWritesCycleLog();
+  await testSessionStartLoopWithActiveCommitments();
+  await testSessionStartLoopFormatterProducesUsableContext();
+  await testSessionStartLoopReturnsNullOnMissingVault();
+  console.log("Runtime integration checks passed: 23/23");
 }
 
 main().catch((error) => {
