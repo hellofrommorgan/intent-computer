@@ -100,7 +100,7 @@ export function createServer(adapter: LocalMcpAdapter): McpServer {
 
   server.tool(
     "thought_search",
-    "Search thoughts by keyword (filesystem scan fallback, semantic search deferred)",
+    "Search thoughts by keyword using qmd BM25 search, with filesystem keyword scan fallback",
     {
       vaultId: z.string().describe("Vault identifier (ignored in local mode)"),
       query: z.string().describe("Search query — keywords to find in thoughts"),
@@ -114,6 +114,41 @@ export function createServer(adapter: LocalMcpAdapter): McpServer {
         vaultId: args.vaultId,
         query: args.query,
         limit: args.limit,
+      });
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+      };
+    },
+  );
+
+  // ─── context_query ────────────────────────────────────────────────────────
+
+  server.tool(
+    "context_query",
+    "Semantic search + graph traversal: finds seed thoughts via qmd deep search, then follows wiki links to return the connected cluster with map membership. Answers 'what do I know about X?'",
+    {
+      vaultId: z.string().describe("Vault identifier (ignored in local mode)"),
+      query: z
+        .string()
+        .describe(
+          "Natural language query — e.g. 'what do I know about the auth module?'",
+        ),
+      limit: z
+        .number()
+        .optional()
+        .describe("Number of seed thoughts from semantic search (default: 5)"),
+      maxDepth: z
+        .number()
+        .optional()
+        .describe(
+          "How many wiki-link hops to follow from seeds (default: 2, max recommended: 3)",
+        ),
+    },
+    async (args) => {
+      const result = await adapter.contextQuery({
+        query: args.query,
+        limit: args.limit,
+        maxDepth: args.maxDepth,
       });
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],

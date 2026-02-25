@@ -45,6 +45,9 @@ import {
   withQueueLock,
   writeQueue,
 } from "@intent-computer/architecture";
+import { qmdSearch, qmdDeepSearch, isQmdAvailable } from "./qmd-bridge.js";
+import { traverseFromSeeds } from "./graph-traversal.js";
+import type { TraversalResult } from "./graph-traversal.js";
 
 // ─── YAML frontmatter helpers ────────────────────────────────────────────────
 
@@ -300,10 +303,58 @@ ${req.body}
     }
 
     const limit = req.limit ?? 10;
-    const hits: ThoughtSearchHit[] = [];
+    const queryTrimmed = req.query.trim();
+    if (!queryTrimmed) return { hits: [] };
 
-    const queryLower = req.query.trim().toLowerCase();
-    if (!queryLower) return { hits: [] };
+    // ── qmd-backed semantic search (preferred) ──────────────────────────────
+    if (isQmdAvailable()) {
+      try {
+        const results = qmdSearch(queryTrimmed, {
+          limit,
+          collection: "thoughts",
+          vaultRoot: this.vaultRoot,
+        });
+
+        if (results.length > 0) {
+          const hits: ThoughtSearchHit[] = [];
+          for (const result of results) {
+            const content = readFileSafe(result.path);
+            if (!content) continue;
+
+            const title = basename(result.path, ".md");
+            const fm = parseFrontmatter(content);
+            const topics = parseTopicsFromFrontmatter(content);
+
+            const prop: Proposition = {
+              id: title,
+              vaultId: "local",
+              title,
+              description: fm["description"] ?? "",
+              topics,
+              confidence: fm["confidence"]
+                ? parseFloat(fm["confidence"])
+                : undefined,
+              sourceRefs: fm["sources"] ? [fm["sources"]] : undefined,
+              createdAt: fm["created"] ?? "",
+              updatedAt: fm["created"] ?? "",
+            };
+
+            hits.push({
+              proposition: prop,
+              score: result.score,
+              excerpt: result.excerpt || result.title || undefined,
+            });
+          }
+          return { hits };
+        }
+      } catch {
+        // qmd failed — fall through to keyword scan
+      }
+    }
+
+    // ── Keyword fallback scan ───────────────────────────────────────────────
+    const hits: ThoughtSearchHit[] = [];
+    const queryLower = queryTrimmed.toLowerCase();
 
     for (const file of readdirSync(thoughtsDir).filter((f) => f.endsWith(".md"))) {
       if (hits.length >= limit) break;
@@ -602,6 +653,46 @@ ${req.markdown}
         phase: task.phase,
       };
     });
+  }
+
+  // ─── context_query ────────────────────────────────────────────────────────
+
+  /**
+   * Semantic search + graph traversal.
+   *
+   * 1. Runs qmd deep_search to find seed thoughts.
+   * 2. Traverses wiki links from those seeds (up to maxDepth hops).
+   * 3. Returns the connected cluster with map membership.
+   *
+   * Falls back to empty result if qmd is unavailable.
+   */
+  async contextQuery(req: {
+    query: string;
+    limit?: number;
+    maxDepth?: number;
+  }): Promise<TraversalResult> {
+    const empty: TraversalResult = { thoughts: [], connections: [], maps: [] };
+
+    if (!isQmdAvailable()) return empty;
+
+    const queryTrimmed = req.query.trim();
+    if (!queryTrimmed) return empty;
+
+    let seedPaths: string[];
+    try {
+      const results = qmdDeepSearch(queryTrimmed, {
+        limit: req.limit ?? 5,
+        collection: "thoughts",
+        vaultRoot: this.vaultRoot,
+      });
+      seedPaths = results.map((r) => r.path);
+    } catch {
+      return empty;
+    }
+
+    if (seedPaths.length === 0) return empty;
+
+    return traverseFromSeeds(this.vaultRoot, seedPaths, req.maxDepth ?? 2);
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────
