@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/architecture" },
+    { "path": "packages/plugin" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/heartbeat" }
+  ]
+}

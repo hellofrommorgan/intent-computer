@@ -1,0 +1,175 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types, ports, domain models (@intent-computer/architecture)
+- packages/plugin/ — opencode plugin with hooks, skills, adapters (@intent-computer/plugin)
+- packages/mcp-server/ — standalone MCP server with 8 tools (@intent-computer/mcp-server)
+- packages/heartbeat/ — autonomy engine, launchd-based (@intent-computer/heartbeat)
+
+TypeScript throughout. Build with `pnpm run build`.
+
+## Key Context: How Skills Work
+
+Skills are SKILL.md files that get loaded into an LLM's system prompt. The LLM then follows the instructions using file manipulation tools. Skills live in:
+- packages/plugin/src/skill-sources/[skill-name]/SKILL.md — processing skills
+- packages/plugin/src/plugin-skills/[skill-name]/SKILL.md — meta skills
+
+Each SKILL.md has YAML frontmatter with metadata (context: fork|inject, etc.) followed by the instruction body.
+
+Look at existing skills for the pattern — e.g., packages/plugin/src/skill-sources/reflect/SKILL.md or packages/plugin/src/skill-sources/reduce/SKILL.md.
+
+## PHASE E: Build /reanalyze Skill — Graph-Driven Quality Sweeps
+
+Create a new skill that performs targeted subgraph analysis and quality improvement sweeps across the vault. Unlike /health (which reports problems) or /reflect (which finds connections for individual thoughts), /reanalyze operates on subgraphs — clusters of related thoughts — and improves them systematically.
+
+### TASK 1: Create the SKILL.md
+
+Create packages/plugin/src/skill-sources/reanalyze/SKILL.md:
+
+```markdown
+---
+name: reanalyze
+description: Subgraph sweep — analyze and improve clusters of related thoughts
+context: fork
+triggers:
+  - /reanalyze
+  - /reanalyze --stale
+  - /reanalyze --weak
+  - /reanalyze --cascade [thought]
+---
+
+# /reanalyze — Subgraph Quality Sweeps
+
+You are performing a targeted quality sweep on a subgraph of the knowledge vault at the path provided in your task context.
+
+## Three Sweep Modes
+
+### Mode 1: --stale (default if no flag)
+Find thoughts that haven't been updated in 30+ days AND have sparse connections (<3 total links).
+These are knowledge that's going cold — either update it or explicitly mark it as stable.
+
+Steps:
+1. List all thoughts in {vocabulary.notes}/ directory
+2. For each thought, check:
+   - Last modified date (from filesystem or frontmatter `created`/`updated` field)
+   - Count incoming wiki links: `grep -rl "[[thought-name]]" {vocabulary.notes}/`
+   - Count outgoing wiki links in the thought's body
+3. Collect thoughts where: (days_since_modified > 30) AND (incoming + outgoing < 3)
+4. For each stale thought (process up to 10):
+   a. Read the thought fully
+   b. Search for potential connections using semantic similarity (check titles and descriptions of all other thoughts)
+   c. If connections found: add wiki links (both directions), update the thought's body
+   d. If the thought's claim is still valid: update the `updated` field in frontmatter
+   e. If the thought's claim is outdated: update the claim and body, or split if it now contains two ideas
+   f. If truly orphaned with no connections: add to the relevant map's open questions section
+
+### Mode 2: --weak
+Find thoughts with weak structural integrity:
+- Missing required schema fields (description, topics)
+- Descriptions that restate the title without adding information
+- Topics pointing to non-existent maps
+- Confidence: felt but with evidence that could upgrade to observed/tested
+
+Steps:
+1. List all thoughts in {vocabulary.notes}/
+2. For each thought, check schema compliance:
+   - Has description field?
+   - Description adds information beyond the title?
+   - Has topics field with at least one valid wiki link?
+   - Topics reference existing maps?
+   - Confidence level matches evidence quality?
+3. Collect non-compliant thoughts
+4. For each weak thought (process up to 10):
+   a. Read fully
+   b. Fix missing fields — write a proper description based on the body content
+   c. Fix topics — add to an appropriate map, create map if cluster warrants it
+   d. Fix description quality — if it restates the title, rewrite to add context
+   e. Upgrade confidence if evidence supports it
+
+### Mode 3: --cascade [thought-name]
+Start from a specific thought and sweep outward through its connections.
+Useful when a thought was significantly updated and its neighbors may need updating too.
+
+Steps:
+1. Read the anchor thought fully
+2. Extract all its wiki links (outgoing connections)
+3. Find all thoughts that link TO the anchor (incoming connections)
+4. For each connected thought (the "neighborhood"):
+   a. Read it fully
+   b. Check if the connection to the anchor is still accurate given the anchor's current content
+   c. Check if the connected thought's claims are consistent with the anchor's claims
+   d. If inconsistent: flag as a tension (create ops/tensions/ entry) or update if the resolution is clear
+   e. If the connection context phrase is stale: update it
+   f. Check for transitive connections — do any of the neighbor's neighbors connect to the anchor too?
+5. Report: which thoughts were updated, which tensions were found, which new connections were made
+
+## Output Format
+
+After completing the sweep, output a summary:
+
+```
+## /reanalyze Summary
+
+Mode: [stale|weak|cascade]
+Thoughts analyzed: N
+Thoughts modified: N
+New connections added: N
+Tensions found: N
+Schema fixes: N
+
+### Changes Made
+- [[thought-name]] — [what was changed and why]
+- [[thought-name]] — [what was changed and why]
+
+### Remaining Issues
+- [any issues that need human judgment]
+```
+
+## Quality Gates
+
+Before modifying ANY thought:
+1. The title must still pass the composability test: "This thought argues that [title]" must read naturally
+2. The description must add information beyond the title
+3. Every wiki link added must point to an existing file
+4. Every map reference in topics must point to an existing map
+5. Do NOT delete thoughts — only update, split, or flag
+
+## Vault Conventions
+- Vault root path is provided in the task context
+- Thoughts are in {vocabulary.notes}/ (typically `thoughts/`)
+- Maps are thoughts with `type: moc` in frontmatter
+- Self-knowledge is in `self/`
+- Operational files are in `ops/`
+- Wiki links use `[[thought title]]` syntax — resolve by filename across the entire vault
+```
+
+### TASK 2: Register the skill in the router
+
+Edit packages/plugin/src/skills/router.ts to add the reanalyze skill to the COMMAND_MAP (or equivalent pattern matching structure). Look at how other skills are registered and follow the same pattern.
+
+The skill should be detected by:
+- `/reanalyze` — default stale mode
+- `/reanalyze --stale` — explicit stale mode
+- `/reanalyze --weak` — weak mode
+- `/reanalyze --cascade [thought]` — cascade mode
+
+Find the command detection patterns in router.ts and add reanalyze following the same convention.
+
+### TASK 3: Verify skill loading works
+
+The injector (packages/plugin/src/skills/injector.ts) already knows how to load from skill-sources/[name]/SKILL.md. No changes needed there — just verify the path is correct:
+- packages/plugin/src/skill-sources/reanalyze/SKILL.md
+
+The fork mechanism (packages/plugin/src/skills/fork.ts) already knows how to load skill instructions via loadSkillInstructions(). No changes needed.
+
+## VERIFICATION
+
+After completing all tasks:
+1. Run `pnpm run build` — must complete with 0 errors
+2. Verify the SKILL.md exists at the correct path
+3. Verify router.ts recognizes /reanalyze commands
+4. Verify the SKILL.md has valid YAML frontmatter
+
+DO NOT modify any existing SKILL.md files, adapters, hooks, or architecture types.

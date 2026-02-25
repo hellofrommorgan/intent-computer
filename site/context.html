@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context Graph &mdash; The Intent Computer</title>
+<meta name="description" content="Your agent's long-term memory. It remembers what you decided, why, and what you were working on.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%96%B8</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-mark">the intent computer</a>
+  <div class="nav-links">
+    <a href="/context" class="active">context graph</a>
+    <a href="/skills">skill graph</a>
+    <a href="/loop">the loop</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <section class="page-header">
+    <h1 class="page-title">Context Graph</h1>
+    <p class="page-subtitle">Your agent's long-term memory. It captures what you decided, why you decided it, and what you were working on &mdash; then uses all of it the next time you start a session.</p>
+  </section>
+
+  <hr>
+
+  <section class="prose">
+    <h2>The problem</h2>
+    <p>Every agent session starts from zero. Your agent doesn't know what you decided yesterday, why you chose Postgres over SQLite, or what you were debugging before lunch. You re-explain. You repeat yourself. You lose momentum.</p>
+    <p>Some tools try to fix this with flat memory files or chat history. But a list of past conversations isn't memory &mdash; it's a haystack. You can't ask "what do I know about the auth module?" and get a useful answer from a log file.</p>
+
+    <h2>How it works</h2>
+    <p>The context graph captures your decisions, reasoning, and discoveries as <strong>connected notes</strong> on your filesystem. Each note is a single insight, linked to related notes, versioned in git. Your agent builds this automatically as you work.</p>
+
+    <div class="cli-window">
+      <div class="cli-titlebar">
+        <span class="cli-dot"></span><span class="cli-dot"></span><span class="cli-dot"></span>
+        <span class="cli-titlebar-text">openclaw</span>
+      </div>
+      <div class="cli-session" id="context-demo" aria-label="Animated CLI session showing context graph in action"></div>
+    </div>
+
+    <p>Every note links to related notes. When your agent reads one, it follows the connections and finds everything relevant &mdash; your debugging patterns, your architecture decisions, the bug you fixed last Tuesday.</p>
+
+    <h2>It builds itself</h2>
+    <p>You don't have to organize any of this. The plugin watches your work and processes what it learns through a four-phase pipeline:</p>
+    <ul>
+      <li><strong>Surface</strong> &mdash; extract insights from your conversations, code, and decisions</li>
+      <li><strong>Reflect</strong> &mdash; find connections to what you already know</li>
+      <li><strong>Revisit</strong> &mdash; update older notes when new information changes how they read</li>
+      <li><strong>Verify</strong> &mdash; check that everything is well-written and properly connected</li>
+    </ul>
+    <p>Raw material goes in. Structured, connected knowledge comes out. The pipeline runs automatically &mdash; you just keep working.</p>
+
+    <h2>How your agent uses it</h2>
+    <p>When you start a new session, the <a href="/loop">intent loop</a> fires. Your agent reads the graph, figures out what's relevant to what you're doing right now, and loads that context. It already knows what you care about before you say anything.</p>
+    <p>As you work, new insights get captured and connected to what's already there. When you end the session, your agent writes down what happened so the next session picks up where you left off.</p>
+
+    <h2>Private by default</h2>
+    <p>Everything lives on your machine &mdash; markdown files and JSON on your filesystem, versioned in git. No database. No cloud dependency. No one else can read it. <code>git log</code> is your audit trail.</p>
+
+    <h2>What makes it different</h2>
+    <p><strong>Connected, not piled up.</strong> Every note links to related notes with context explaining the relationship. Your agent doesn't just search for keywords &mdash; it follows connections. Ask about the auth module and it finds your debugging patterns, your architecture decisions, and the bug you fixed last Tuesday.</p>
+    <p><strong>Maintained, not just accumulated.</strong> The pipeline doesn't just add new notes &mdash; it goes back and updates old ones when new information arrives. Your knowledge stays current instead of rotting.</p>
+    <p><strong>Grows without you thinking about it.</strong> You don't file notes, tag things, or organize folders. The system watches your work and builds the graph autonomously. You get the benefits of a well-organized knowledge base without doing any of the organizing.</p>
+  </section>
+
+  <hr>
+
+  <a href="/" class="back">&larr; home</a>
+
+  <footer class="footer">&copy; 2026 Intent Computer</footer>
+
+</div>
+
+<script>
+(function() {
+  var el = document.getElementById('context-demo');
+  var sequences = [
+    [
+      { type: 'prompt', text: '> ', cmd: 'what do I know about the auth module?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'searching context graph...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found 4 connected notes:', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "the retry logic fires before token propagation completes"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "auth module uses stale refresh tokens on cold start"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "we chose JWT over session tokens for stateless scaling"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "API retry strategy needs exponential backoff"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Connected to: debugging patterns, API design, session 34', delay: 500 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: 'why did we pick Postgres over SQLite?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'searching context graph...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found in session 12 (Feb 8):', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "SQLite doesn\'t handle concurrent writes from the worker pool"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "Postgres connection pooling solves the write contention"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Also connected:', delay: 300 },
+      { type: 'line', cls: 'cli-highlight', text: '  → "the worker pool needs 4+ concurrent writers at peak"', delay: 400 },
+      { type: 'line', cls: 'cli-muted', text: 'Decision recorded in: architecture decisions, database', delay: 500 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: 'what was I working on yesterday?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'loading working memory...', delay: 600 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Session 47 (yesterday, 3h 12m):', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → Fixed the token refresh race condition', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → Started refactoring the retry middleware', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  → Left off: retry tests are failing on timeout edge case', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Suggested: pick up the retry timeout tests from yesterday', delay: 500 },
+    ],
+  ];
+  var current = 0;
+
+  function run(seq) {
+    el.innerHTML = '';
+    var totalDelay = 0;
+    seq.forEach(function(step) {
+      totalDelay += step.delay;
+      var d = totalDelay;
+      setTimeout(function() {
+        if (step.type === 'prompt') {
+          var line = document.createElement('div');
+          line.className = 'cli-line';
+          var prompt = document.createElement('span');
+          prompt.className = 'cli-prompt';
+          prompt.textContent = step.text;
+          line.appendChild(prompt);
+          var cmd = document.createElement('span');
+          cmd.className = 'cli-cmd';
+          cmd.textContent = step.cmd;
+          line.appendChild(cmd);
+          el.appendChild(line);
+        } else {
+          var line = document.createElement('div');
+          line.className = 'cli-line' + (step.cls ? ' ' + step.cls : '');
+          line.textContent = step.text;
+          el.appendChild(line);
+        }
+        el.scrollTop = el.scrollHeight;
+      }, d);
+    });
+    totalDelay += 3500;
+    setTimeout(function() {
+      current = (current + 1) % sequences.length;
+      run(sequences[current]);
+    }, totalDelay);
+  }
+
+  run(sequences[current]);
+})();
+</script>
+
+</body>
+</html>

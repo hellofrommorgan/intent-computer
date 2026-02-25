@@ -1,0 +1,185 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types, ports, domain models (@intent-computer/architecture)
+- packages/plugin/ — opencode plugin with hooks, skills, adapters (@intent-computer/plugin)
+- packages/mcp-server/ — standalone MCP server with 8 tools (@intent-computer/mcp-server)
+- packages/heartbeat/ — autonomy engine, launchd-based (@intent-computer/heartbeat)
+
+TypeScript throughout. Build with `pnpm run build`.
+
+## PHASE F: Hygiene Batch — Quick Fixes
+
+These are 5 independent fixes that don't affect architecture. Each is small and self-contained.
+
+### TASK 1: Fix saas-contracts.ts status terminology
+
+File: packages/architecture/src/saas-contracts.ts
+
+The QueuePatch interface (around line 21) uses "complete" as a status value:
+```typescript
+export interface QueuePatch {
+  status?: "pending" | "in-progress" | "complete" | "failed";
+```
+
+But the domain model in packages/architecture/src/domain.ts uses "done" as the canonical status:
+```typescript
+export type PipelineTaskStatus = "pending" | "in-progress" | "done" | "failed" | "archived";
+```
+
+Fix: Change "complete" to "done" in QueuePatch:
+```typescript
+export interface QueuePatch {
+  status?: "pending" | "in-progress" | "done" | "failed";
+```
+
+Also check if there are any other references to "complete" as a status in saas-contracts.ts and fix them to use "done".
+
+### TASK 2: Expand .gitignore
+
+File: .gitignore (at repo root /Users/morgan/Projects/intent-computer/.gitignore)
+
+Currently it only contains:
+```
+.firecrawl/
+```
+
+Add standard ignores for a TypeScript monorepo:
+
+```
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Firecrawl cache
+.firecrawl/
+
+# Codex orchestration logs
+scripts/codex-logs/
+```
+
+### TASK 3: Make sync-skills.js portable
+
+File: scripts/sync-skills.js
+
+Line 22 has a hardcoded path:
+```javascript
+const PLUGIN_ROOT = "/Users/morgan/.claude/plugins/cache/agenticnotetaking/arscontexta/0.8.0";
+```
+
+Replace with a portable resolution using environment variable or CLI argument:
+
+```javascript
+// Resolve plugin root from CLI argument, environment variable, or default
+const PLUGIN_ROOT = process.argv[2]
+  || process.env.ARSCONTEXTA_PLUGIN_ROOT
+  || (() => {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    // Try to find the latest version in the plugin cache
+    const cacheDir = path.join(home, ".claude", "plugins", "cache", "agenticnotetaking", "arscontexta");
+    try {
+      const versions = fs.readdirSync(cacheDir).sort();
+      if (versions.length > 0) {
+        return path.join(cacheDir, versions[versions.length - 1]);
+      }
+    } catch { /* fall through */ }
+    // Hardcoded fallback for development
+    return path.join(home, ".claude", "plugins", "cache", "agenticnotetaking", "arscontexta", "0.8.0");
+  })();
+```
+
+Make sure to import `path` and `fs` at the top of the file if not already imported. Check what's already imported.
+
+Also update the sync script in root package.json:
+```json
+"sync": "node scripts/sync-skills.js"
+```
+Add a comment or usage example so it's clear you can pass a path:
+```json
+"sync": "node scripts/sync-skills.js",
+"sync:custom": "node scripts/sync-skills.js /path/to/plugin/root"
+```
+
+Actually, just keep the single "sync" script as-is since it now auto-resolves. No need for sync:custom.
+
+### TASK 4: Delete or gate data-feed exports
+
+Check if packages/plugin/src/data-feed/ directory exists. If it does:
+
+1. Check if any other file in the monorepo imports from data-feed/
+   - Search: grep -r "data-feed" packages/ --include="*.ts" -l
+   - Search: grep -r "DataFeed" packages/ --include="*.ts" -l
+
+2. If nothing imports it: delete the entire data-feed directory
+   - rm -rf packages/plugin/src/data-feed/
+
+3. If something imports it: add a JSDoc comment marking it as experimental:
+   ```typescript
+   /**
+    * @experimental Data feed is a placeholder for future real-time event streaming.
+    * Not yet implemented. Do not depend on these exports in production code.
+    */
+   ```
+
+4. Check packages/plugin/src/index.ts — if it re-exports data-feed, remove that export line.
+
+5. Check if docs/DATA-FEED-RESEARCH.md exists. If so, leave it (it's documentation, not code).
+
+### TASK 5: Verify all package.json devDependencies
+
+File: package.json (root)
+
+The root package.json should already have tsx in devDependencies from Phase A. Verify it's there:
+```json
+"devDependencies": {
+  "typescript": "^5.0.0",
+  "tsx": "^4.0.0"
+}
+```
+
+If tsx is NOT there (Phase A might have missed it or this phase runs independently), add it.
+
+Also check that the triggers:* scripts were removed in Phase A:
+- "triggers:install" should NOT exist
+- "triggers:uninstall" should NOT exist
+- "triggers:check" should NOT exist
+
+If they're still there, remove them.
+
+## VERIFICATION
+
+After completing all tasks:
+1. Run `pnpm run build` — must complete with 0 errors
+2. Verify saas-contracts.ts uses "done" not "complete"
+3. Verify .gitignore has node_modules/, dist/, *.tsbuildinfo entries
+4. Verify sync-skills.js no longer has the hardcoded /Users/morgan path on line 22
+5. Verify data-feed exports are cleaned up
+6. Verify package.json has tsx in devDependencies and no triggers:* scripts
+7. Run `git diff --stat` to see the full changeset
+
+DO NOT modify any adapter code, hook code, architecture types (except saas-contracts.ts), or SKILL.md files. These are hygiene fixes only.

@@ -1,0 +1,116 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types + domain + ports + runtime + 3 shared modules
+- packages/plugin/ — opencode plugin (adapters, hooks, skills)
+- packages/mcp-server/ — standalone MCP server (8 tools)
+- packages/heartbeat/ — autonomy engine (commitment-driven background processing)
+
+Existing test scripts in scripts/:
+- test-fork.ts — 5 tests for fork/pipeline/skill machinery (uses mock client against ~/Mind)
+- test-regressions.ts — 6 regression tests (traversal guards, shell injection, topic parser, memory IDs, pipeline alias, heartbeat queue)
+- test-runtime.ts — 4 runtime integration tests (commitment feedback, heartbeat dry-run, MCP queue migration, execution dispatch)
+
+Root package.json runs: `pnpm run test:regressions && pnpm run test:runtime && pnpm run test:fork`
+
+## Your Task
+
+### Step 1: Run existing tests and fix any failures
+
+Run all 3 test scripts:
+```
+npx tsx scripts/test-regressions.ts
+npx tsx scripts/test-runtime.ts
+npx tsx scripts/test-fork.ts
+```
+
+If any test fails, fix the code to make it pass. Common issues after the Phase A-F refactor:
+- Import paths may have changed (e.g., queue functions moved to @intent-computer/architecture)
+- Function signatures may have changed (readQueue now takes vaultRoot, not a path)
+- Exported types may have new required fields
+
+For each failure:
+1. Read the error message carefully
+2. Check the actual module's exports (in packages/architecture/src/ or packages/plugin/src/)
+3. Fix the test OR the source if the source is wrong
+4. Re-run to confirm the fix
+
+### Step 2: Write unit tests for the 3 new shared architecture modules
+
+Create `scripts/test-architecture.ts` with tests for:
+
+#### 2a. QueueStore (packages/architecture/src/queue-store.ts)
+
+Functions: withQueueLock, readQueue, writeQueue, queuePath, lockPath
+
+Tests:
+- readQueue returns empty queue when file doesn't exist
+- writeQueue + readQueue roundtrip preserves tasks
+- writeQueue uses atomic rename (check no corruption on concurrent write)
+- withQueueLock prevents concurrent access (run two locks, second should wait)
+- withQueueLock cleans up lock file after success
+- withQueueLock cleans up lock file after error (fn throws)
+- withQueueLock handles stale locks (create a lock file older than 30s, verify it gets cleaned)
+- readQueue normalizes legacy queue format (schema_version:3 → version:1)
+
+Use temp directories (mkdtempSync) for isolation. Clean up in finally blocks.
+
+#### 2b. VaultConventions (packages/architecture/src/vault-conventions.ts)
+
+Functions: vaultPaths, readFirstExisting, findFirstExistingPath
+
+Tests:
+- vaultPaths returns correct paths for a given root
+- readFirstExisting returns content of first existing file
+- readFirstExisting returns null when no candidates exist
+- readFirstExisting skips missing files and finds later ones
+- findFirstExistingPath returns path (not content) of first existing file
+- findFirstExistingPath returns null when none exist
+
+#### 2c. Frontmatter (packages/architecture/src/frontmatter.ts)
+
+Functions: parseFrontmatter, extractFrontmatterBody, parseTopicsFromFrontmatter, loadVocabulary
+
+Tests:
+- parseFrontmatter extracts key-value pairs from YAML
+- parseFrontmatter handles quoted string values (single and double)
+- parseFrontmatter handles array values in bracket syntax
+- parseFrontmatter returns empty object for content without frontmatter
+- parseFrontmatter returns empty object for unclosed frontmatter
+- extractFrontmatterBody returns content after closing ---
+- extractFrontmatterBody returns full content if no frontmatter
+- parseTopicsFromFrontmatter extracts bracket-style topics
+- parseTopicsFromFrontmatter extracts list-style topics (- item per line)
+- parseTopicsFromFrontmatter returns empty array when no topics field
+- loadVocabulary extracts vocabulary section from frontmatter
+- loadVocabulary returns empty object when no vocabulary section
+
+### Step 3: Add to package.json
+
+Add a `test:architecture` script to the root package.json:
+```json
+"test:architecture": "npx tsx scripts/test-architecture.ts"
+```
+
+And update the `test` script to include it:
+```json
+"test": "pnpm run test:architecture && pnpm run test:regressions && pnpm run test:runtime && pnpm run test:fork"
+```
+
+### Step 4: Run everything
+
+Run `pnpm test` to verify all test suites pass. Fix any failures.
+
+### Step 5: Verify
+
+Final check: `pnpm run build && pnpm test` should both succeed with 0 errors.
+
+## Important Notes
+
+- Do NOT change the architecture module signatures unless a test reveals they're genuinely broken
+- Use the same test pattern as existing scripts (assert function, temp vaults, console output)
+- Import from the TypeScript source files (e.g., ../packages/architecture/src/queue-store.js) not the built output
+- All temp directories must be cleaned up in finally blocks
+- The test file should exit 0 on success, 1 on failure

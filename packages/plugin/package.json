@@ -1,0 +1,42 @@
+{
+  "name": "@intent-computer/plugin",
+  "version": "0.1.0",
+  "description": "opencode plugin implementing the intent computer knowledge system",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "src/skill-sources/",
+    "src/plugin-skills/",
+    "src/config/",
+    "src/generators/",
+    "src/methodology/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "knowledge-management",
+    "intent-computer",
+    "agent-memory"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@intent-computer/architecture": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/sdk": "latest",
+    "@types/node": "^25.2.3"
+  }
+}

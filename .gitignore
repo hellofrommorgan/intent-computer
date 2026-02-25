@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Firecrawl cache
+.firecrawl/
+
+# Codex orchestration logs
+scripts/codex-logs/
+.vercel
+
+# Local config
+.claude/
+test-results/
+WORKLOG.md
+vibes.JPG
+methodology/
+docs/prd-*

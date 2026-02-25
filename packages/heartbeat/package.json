@@ -1,0 +1,23 @@
+{
+  "name": "@intent-computer/heartbeat",
+  "version": "0.1.0",
+  "description": "Commitment-driven autonomy engine for the intent computer",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "intent-computer-heartbeat": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@intent-computer/architecture": "workspace:*",
+    "rettiwt-api": "^6.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3"
+  }
+}

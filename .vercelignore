@@ -1,0 +1,17 @@
+# Everything except site/ and vercel.json
+packages/
+docs/
+methodology/
+scripts/
+test-results/
+node_modules/
+*.tsbuildinfo
+pnpm-lock.yaml
+pnpm-workspace.yaml
+tsconfig.base.json
+tsconfig.json
+WORKLOG.md
+README.md
+vibes.JPG
+.claude/
+.git/

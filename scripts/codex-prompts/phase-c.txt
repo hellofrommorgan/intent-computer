@@ -1,0 +1,426 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types, ports, domain models (@intent-computer/architecture)
+- packages/plugin/ — opencode plugin with hooks, skills, adapters (@intent-computer/plugin)
+- packages/mcp-server/ — standalone MCP server with 8 tools (@intent-computer/mcp-server)
+- packages/heartbeat/ — autonomy engine, launchd-based (@intent-computer/heartbeat)
+
+TypeScript throughout. Build with `pnpm run build`.
+
+## Key Context: The Heartbeat
+
+The heartbeat (packages/heartbeat/) runs every 15 minutes via launchd. It reads vault state (commitments, queue, conditions) and takes actions. Currently it has phases 5a (read + recommend) and 5b (trigger aligned queue tasks).
+
+There is a REFERENCE IMPLEMENTATION in bash at ~/Mind/ops/scripts/heartbeat.sh (488 lines) that shows the full 7-phase design with real Claude CLI invocations. The TS heartbeat needs to be evolved to match this capability.
+
+The bash heartbeat uses this pattern for LLM work:
+```bash
+claude --dangerously-skip-permissions -p --model sonnet "prompt here"
+```
+
+The TS heartbeat currently has NO LLM invocation capability. It only reads files and writes JSON/markdown.
+
+## PHASE C: Close Loop 2 — Evolve Heartbeat Into Full Autonomy Engine
+
+### TASK 1: Build heartbeat runner module
+
+Create packages/heartbeat/src/runner.ts — a module that can invoke the Claude CLI to perform LLM-based tasks.
+
+```typescript
+import { execSync, execFileSync } from "child_process";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
+import { join, dirname } from "path";
+
+export interface RunnerOptions {
+  model?: string;
+  timeoutMs?: number;
+  maxTokens?: number;
+}
+
+export interface RunnerResult {
+  success: boolean;
+  output: string;
+  error?: string;
+  durationMs: number;
+}
+
+const DEFAULT_MODEL = "sonnet";
+const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
+
+/**
+ * Invoke Claude CLI with a prompt. Returns the model's response.
+ * Uses --dangerously-skip-permissions for autonomous operation.
+ * Uses -p (print mode) for non-interactive output.
+ */
+export function runClaude(prompt: string, options: RunnerOptions = {}): RunnerResult {
+  const model = options.model ?? DEFAULT_MODEL;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const start = Date.now();
+
+  try {
+    const output = execFileSync("claude", [
+      "--dangerously-skip-permissions",
+      "-p",
+      "--model", model,
+      prompt,
+    ], {
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024, // 10MB
+      env: {
+        ...process.env,
+        // Prevent recursive heartbeat spawning
+        INTENT_HEARTBEAT_DEPTH: String((parseInt(process.env.INTENT_HEARTBEAT_DEPTH ?? "0", 10)) + 1),
+      },
+    });
+
+    return {
+      success: true,
+      output: output.trim(),
+      durationMs: Date.now() - start,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      output: error.stdout?.toString() ?? "",
+      error: error.stderr?.toString() ?? error.message ?? "Unknown error",
+      durationMs: Date.now() - start,
+    };
+  }
+}
+
+/**
+ * Run a skill-based task via Claude CLI.
+ * Loads the SKILL.md for the given skill name and passes it along with the task context.
+ */
+export function runSkillTask(
+  skillName: string,
+  taskContext: string,
+  vaultRoot: string,
+  options: RunnerOptions = {},
+): RunnerResult {
+  // Find the SKILL.md
+  const skillPaths = [
+    join(vaultRoot, "..", "Projects", "intent-computer", "packages", "plugin", "src", "skill-sources", skillName, "SKILL.md"),
+    join(process.cwd(), "packages", "plugin", "src", "skill-sources", skillName, "SKILL.md"),
+  ];
+
+  let skillContent = "";
+  for (const p of skillPaths) {
+    if (existsSync(p)) {
+      skillContent = readFileSync(p, "utf-8");
+      break;
+    }
+  }
+
+  const prompt = skillContent
+    ? `You are executing the /${skillName} skill in the vault at ${vaultRoot}.\n\n=== SKILL INSTRUCTIONS ===\n${skillContent}\n=== END SKILL ===\n\n=== TASK CONTEXT ===\n${taskContext}\n=== END TASK ===`
+    : `You are working in the vault at ${vaultRoot}.\n\nTask: ${taskContext}`;
+
+  return runClaude(prompt, options);
+}
+```
+
+### TASK 2: Add depth tracking (recursion safety)
+
+The bash heartbeat has depth tracking to prevent recursive spawning. Port this to the TS heartbeat.
+
+In packages/heartbeat/src/heartbeat.ts, add depth checking at the TOP of the main runHeartbeat() function (or whatever the entry point function is called):
+
+```typescript
+const MAX_HEARTBEAT_DEPTH = 2;
+
+function checkDepth(): boolean {
+  const depth = parseInt(process.env.INTENT_HEARTBEAT_DEPTH ?? "0", 10);
+  if (depth >= MAX_HEARTBEAT_DEPTH) {
+    console.log(`[heartbeat] Depth limit reached (${depth}/${MAX_HEARTBEAT_DEPTH}), skipping`);
+    return false;
+  }
+  return true;
+}
+```
+
+Call checkDepth() at the start of the heartbeat entry point. If it returns false, exit early.
+
+The bash heartbeat also resets depth when the user creates content (detected by checking if any thought was modified by the user, not the heartbeat). Add a similar check:
+
+```typescript
+function shouldResetDepth(vaultRoot: string): boolean {
+  // Check if any thought was modified in the last 15 minutes by a process
+  // that isn't the heartbeat (indicates human activity)
+  const markerPath = join(vaultRoot, "ops", ".heartbeat-marker");
+  if (!existsSync(markerPath)) return false;
+
+  const markerTime = statSync(markerPath).mtimeMs;
+  const thoughtsDir = join(vaultRoot, "thoughts");
+  if (!existsSync(thoughtsDir)) return false;
+
+  const entries = readdirSync(thoughtsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const mtime = statSync(join(thoughtsDir, entry.name)).mtimeMs;
+    // If a thought was modified AFTER the last heartbeat run, human activity detected
+    if (mtime > markerTime) return true;
+  }
+  return false;
+}
+```
+
+Write a marker file at the END of each heartbeat run:
+```typescript
+writeFileSync(join(vaultRoot, "ops", ".heartbeat-marker"), new Date().toISOString(), "utf-8");
+```
+
+### TASK 3: Add Phase 5c — Threshold-triggered actions
+
+Currently the heartbeat only triggers tasks that are ALIGNED with active commitments (Phase 5b). Add Phase 5c which triggers actions based on condition THRESHOLDS regardless of commitment alignment.
+
+In packages/heartbeat/src/heartbeat.ts, add a new function:
+
+```typescript
+interface ThresholdAction {
+  condition: string;
+  threshold: number;
+  current: number;
+  action: string;
+  skillName: string;
+  taskContext: string;
+}
+
+function evaluateThresholds(vaultRoot: string): ThresholdAction[] {
+  const actions: ThresholdAction[] = [];
+
+  // Inbox pressure
+  const inboxDir = join(vaultRoot, "inbox");
+  const inboxCount = existsSync(inboxDir)
+    ? readdirSync(inboxDir).filter(f => f.endsWith(".md")).length
+    : 0;
+  if (inboxCount > 3) {
+    actions.push({
+      condition: "inbox-pressure",
+      threshold: 3,
+      current: inboxCount,
+      action: "process-inbox",
+      skillName: "reduce",
+      taskContext: `Process ${Math.min(3, inboxCount)} inbox items from ${inboxDir}. Extract insights as thoughts.`,
+    });
+  }
+
+  // Observation backlog
+  const obsDir = join(vaultRoot, "ops", "observations");
+  const obsCount = existsSync(obsDir)
+    ? readdirSync(obsDir).filter(f => f.endsWith(".md")).length
+    : 0;
+  if (obsCount > 10) {
+    actions.push({
+      condition: "observation-backlog",
+      threshold: 10,
+      current: obsCount,
+      action: "triage-observations",
+      skillName: "rethink",
+      taskContext: `Triage ${obsCount} pending observations in ${obsDir}. Promote patterns to thoughts, resolve addressed items.`,
+    });
+  }
+
+  // Orphan thoughts
+  const thoughtsDir = join(vaultRoot, "thoughts");
+  let orphanCount = 0;
+  if (existsSync(thoughtsDir)) {
+    const thoughts = readdirSync(thoughtsDir).filter(f => f.endsWith(".md"));
+    for (const t of thoughts) {
+      const name = t.replace(/\.md$/, "");
+      try {
+        execSync(`grep -rl "\\[\\[${name}\\]\\]" "${thoughtsDir}" "${join(vaultRoot, "self")}" 2>/dev/null`, { encoding: "utf-8" });
+      } catch {
+        orphanCount++;
+      }
+    }
+  }
+  if (orphanCount > 5) {
+    actions.push({
+      condition: "orphan-pressure",
+      threshold: 5,
+      current: orphanCount,
+      action: "connect-orphans",
+      skillName: "reflect",
+      taskContext: `Connect ${orphanCount} orphan thoughts. Find relationships and add wiki links.`,
+    });
+  }
+
+  return actions;
+}
+```
+
+Add execSync to the imports if not already present.
+
+Then in the main heartbeat flow, after Phase 5b (triggerAlignedTasks), add:
+
+```typescript
+// Phase 5c: threshold-triggered actions
+const thresholdActions = evaluateThresholds(vaultRoot);
+for (const action of thresholdActions) {
+  console.log(`[heartbeat:5c] ${action.condition}: ${action.current}/${action.threshold} → ${action.action}`);
+  const result = runSkillTask(action.skillName, action.taskContext, vaultRoot, { timeoutMs: 180_000 });
+  if (result.success) {
+    console.log(`[heartbeat:5c] ${action.action} completed in ${result.durationMs}ms`);
+  } else {
+    console.log(`[heartbeat:5c] ${action.action} failed: ${result.error}`);
+  }
+}
+```
+
+Import runSkillTask from "./runner.js".
+
+### TASK 4: Add Phase 6 — Morning brief via Claude inference
+
+The current heartbeat generates a template-based morning brief. Replace this with Claude-powered synthesis.
+
+Add a function:
+
+```typescript
+function generateMorningBrief(vaultRoot: string, conditions: ConditionResults, commitmentSummary: string): void {
+  const briefPath = join(vaultRoot, "ops", "morning-brief.md");
+
+  // Read current vault context for the prompt
+  const goalsContent = readFirstExisting([
+    join(vaultRoot, "self", "goals.md"),
+    join(vaultRoot, "ops", "goals.md"),
+  ]) ?? "No goals found.";
+
+  const workingMemory = readFirstExisting([
+    join(vaultRoot, "self", "working-memory.md"),
+    join(vaultRoot, "ops", "working-memory.md"),
+  ]) ?? "No working memory.";
+
+  // Use readFirstExisting from @intent-computer/architecture if available,
+  // otherwise implement locally
+  const prompt = `You are generating a morning brief for a knowledge vault at ${vaultRoot}.
+
+Current date: ${new Date().toISOString().split("T")[0]}
+
+## Vault Conditions
+${JSON.stringify(conditions, null, 2)}
+
+## Active Commitments
+${commitmentSummary}
+
+## Current Goals
+${goalsContent}
+
+## Recent Working Memory
+${workingMemory.split("\n").slice(-30).join("\n")}
+
+## Your Task
+Write a concise morning brief (200-400 words) that:
+1. Summarizes what's active and what needs attention
+2. Highlights any condition thresholds that are breached
+3. Suggests the single most valuable next action
+4. Notes any commitments that are going stale
+
+Write in a warm, direct voice. Use markdown. Start with "# Morning Brief — [date]".
+Output ONLY the brief content, no preamble.`;
+
+  const result = runClaude(prompt, { timeoutMs: 60_000 });
+
+  if (result.success && result.output.length > 50) {
+    writeFileSync(briefPath, result.output, "utf-8");
+    console.log(`[heartbeat:6] Morning brief generated (${result.output.length} chars, ${result.durationMs}ms)`);
+  } else {
+    console.log(`[heartbeat:6] Morning brief generation failed: ${result.error ?? "output too short"}`);
+    // Fall back to template-based brief (existing behavior)
+  }
+}
+```
+
+Import `readFirstExisting` from "@intent-computer/architecture" if it was added in Phase A. Otherwise define it locally.
+
+Call this after Phase 5c in the heartbeat flow. Only generate if the morning brief is missing or older than 12 hours.
+
+### TASK 5: Add Phase 7 — Working memory update via Claude inference
+
+Add a function that uses Claude to synthesize a working memory update:
+
+```typescript
+function updateWorkingMemory(vaultRoot: string, actionsPerformed: string[]): void {
+  const wmPaths = [
+    join(vaultRoot, "self", "working-memory.md"),
+    join(vaultRoot, "ops", "working-memory.md"),
+  ];
+  let wmPath = wmPaths[0]; // default
+  for (const p of wmPaths) {
+    if (existsSync(p)) { wmPath = p; break; }
+  }
+
+  const existingWm = existsSync(wmPath) ? readFileSync(wmPath, "utf-8") : "";
+
+  const prompt = `You are updating the working memory for a knowledge vault.
+
+Current working memory:
+${existingWm.split("\n").slice(-30).join("\n")}
+
+Actions performed this heartbeat cycle:
+${actionsPerformed.map(a => `- ${a}`).join("\n")}
+
+Current time: ${new Date().toISOString()}
+
+## Your Task
+Write an updated working memory entry (3-5 lines) that:
+1. Notes what was done in this cycle
+2. Carries forward any important context from the existing memory
+3. Flags anything that needs human attention
+
+Output ONLY the entry lines (no headers, no preamble). These will be appended to the existing working memory.`;
+
+  const result = runClaude(prompt, { timeoutMs: 30_000 });
+
+  if (result.success && result.output.length > 10) {
+    // Append to working memory, keep bounded at 50 lines
+    const existing = existingWm.split("\n").filter(l => l.trim());
+    const newLines = result.output.split("\n");
+    const bounded = [...existing.slice(-45), "", ...newLines];
+    const dir = dirname(wmPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(wmPath, bounded.join("\n").trim() + "\n", "utf-8");
+    console.log(`[heartbeat:7] Working memory updated (${newLines.length} new lines)`);
+  } else {
+    console.log(`[heartbeat:7] Working memory update failed: ${result.error ?? "output too short"}`);
+  }
+}
+```
+
+Call this at the end of the heartbeat flow, passing a list of what actions were taken.
+
+### TASK 6: Wire everything into the main heartbeat flow
+
+Update the main heartbeat function (runHeartbeat or similar) to:
+
+1. Check depth first (Task 2) — exit if over limit
+2. Run existing Phase 5a (conditions + evaluation)
+3. Run existing Phase 5b (aligned task triggering)
+4. Run Phase 5c (threshold actions) — Task 3
+5. Run Phase 6 (morning brief) — Task 4
+6. Run Phase 7 (working memory) — Task 5
+7. Write heartbeat marker — Task 2
+
+Collect action summaries from phases 5b, 5c for the Phase 7 working memory update.
+
+### TASK 7: Update packages/heartbeat/src/index.ts
+
+Export the runner module:
+```typescript
+export * from "./runner.js";
+```
+
+## VERIFICATION
+
+After completing all tasks:
+1. Run `pnpm run build` — must complete with 0 errors
+2. Verify runner.ts exists and exports runClaude and runSkillTask
+3. Verify heartbeat.ts has all 7 phases wired in sequence
+4. Verify depth tracking is present at the heartbeat entry point
+5. Check that execSync and execFileSync are properly imported
+
+DO NOT modify any plugin code, MCP server code, or architecture types. This phase is entirely within packages/heartbeat/.

@@ -1,0 +1,314 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types, ports, domain models (@intent-computer/architecture)
+- packages/plugin/ — opencode plugin with hooks, skills, adapters (@intent-computer/plugin)
+- packages/mcp-server/ — standalone MCP server with 8 tools (@intent-computer/mcp-server)
+- packages/heartbeat/ — autonomy engine, launchd-based (@intent-computer/heartbeat)
+
+TypeScript throughout. Build with `pnpm run build`.
+
+## PHASE D: Deep Perception + Enhanced Recommendations
+
+### TASK 1: Add missing health categories to LocalPerception
+
+The perception adapter at packages/plugin/src/adapters/local-perception.ts currently checks 5 conditions:
+1. Inbox pressure (lines 67-89)
+2. Orphan count (lines 92-111)
+3. Observation backlog (lines 114-133)
+4. Tension backlog (lines 136-155)
+5. Session backlog (lines 158-178)
+
+It's MISSING 3 important health categories. Add them:
+
+#### 1a. Schema compliance check
+
+Add a check that scans thoughts/*.md for missing required frontmatter fields (description, topics).
+
+```typescript
+// ─── Schema compliance ──────────────────────────────────────────────
+const thoughtsDir = join(this.vaultRoot, "thoughts");
+if (existsSync(thoughtsDir)) {
+  const thoughtFiles = this.listDir(thoughtsDir, ".md");
+  let missingDescription = 0;
+  let missingTopics = 0;
+
+  for (const file of thoughtFiles.slice(0, 50)) { // Sample first 50 for performance
+    const content = this.safeReadFile(join(thoughtsDir, file));
+    if (!content) continue;
+
+    if (!content.match(/^description:/m)) missingDescription++;
+    if (!content.match(/^topics:/m)) missingTopics++;
+  }
+
+  const totalChecked = Math.min(thoughtFiles.length, 50);
+  const schemaIssues = missingDescription + missingTopics;
+
+  if (schemaIssues > 0) {
+    signals.push({
+      id: randomUUID(),
+      observedAt: now,
+      channel: "vault:health",
+      summary: `Schema: ${missingDescription} missing description, ${missingTopics} missing topics (of ${totalChecked} checked)`,
+      confidence: "high",
+      metadata: { missingDescription, missingTopics, totalChecked },
+    });
+  }
+
+  if (missingDescription > totalChecked * 0.2) {
+    gaps.push({
+      id: randomUUID(),
+      intentId: input.intent.id,
+      label: "schema-compliance",
+      gapClass: "incidental",
+      evidence: [`${missingDescription}/${totalChecked} thoughts missing description field`],
+      confidence: "high",
+    });
+  }
+}
+```
+
+You will need to add a safeReadFile helper if one doesn't exist:
+```typescript
+private safeReadFile(path: string): string | null {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
+}
+```
+
+#### 1b. Link health check
+
+Add a check for dangling wiki links (links pointing to non-existent files).
+
+```typescript
+// ─── Link health ────────────────────────────────────────────────────
+if (existsSync(thoughtsDir)) {
+  const thoughtFiles = this.listDir(thoughtsDir, ".md");
+  let danglingCount = 0;
+  const checked = thoughtFiles.slice(0, 30); // Sample for performance
+
+  for (const file of checked) {
+    const content = this.safeReadFile(join(thoughtsDir, file));
+    if (!content) continue;
+
+    const wikiLinks = [...content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map(m => m[1].trim());
+    for (const link of wikiLinks) {
+      const candidates = [
+        join(thoughtsDir, `${link}.md`),
+        join(this.vaultRoot, "self", `${link}.md`),
+        join(this.vaultRoot, `${link}.md`),
+      ];
+      if (!candidates.some(c => existsSync(c))) {
+        danglingCount++;
+      }
+    }
+  }
+
+  if (danglingCount > 0) {
+    signals.push({
+      id: randomUUID(),
+      observedAt: now,
+      channel: "vault:health",
+      summary: `${danglingCount} dangling wiki link(s) detected in ${checked.length} sampled thoughts`,
+      confidence: "medium",
+      metadata: { danglingCount, sampledThoughts: checked.length },
+    });
+  }
+
+  if (danglingCount > 5) {
+    gaps.push({
+      id: randomUUID(),
+      intentId: input.intent.id,
+      label: "link-health",
+      gapClass: "incidental",
+      evidence: [`${danglingCount} dangling wiki links found`],
+      confidence: "medium",
+    });
+  }
+}
+```
+
+#### 1c. Description quality check
+
+Add a check for thoughts whose description just restates the title.
+
+```typescript
+// ─── Description quality ─────────────────────────────────────────────
+if (existsSync(thoughtsDir)) {
+  const thoughtFiles = this.listDir(thoughtsDir, ".md");
+  let poorDescriptions = 0;
+  const checked = thoughtFiles.slice(0, 30);
+
+  for (const file of checked) {
+    const content = this.safeReadFile(join(thoughtsDir, file));
+    if (!content) continue;
+
+    const title = file.replace(/\.md$/, "").toLowerCase();
+    const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+    if (!descMatch) continue;
+
+    const desc = descMatch[1].toLowerCase();
+    // Check if description is just the title rephrased
+    // Simple heuristic: >60% word overlap
+    const titleWords = new Set(title.split(/[^a-z0-9]+/).filter(Boolean));
+    const descWords = desc.split(/[^a-z0-9]+/).filter(Boolean);
+    if (titleWords.size > 0 && descWords.length > 0) {
+      const overlap = descWords.filter(w => titleWords.has(w)).length;
+      const overlapRatio = overlap / Math.max(titleWords.size, descWords.length);
+      if (overlapRatio > 0.6) poorDescriptions++;
+    }
+  }
+
+  if (poorDescriptions > 0) {
+    signals.push({
+      id: randomUUID(),
+      observedAt: now,
+      channel: "vault:health",
+      summary: `${poorDescriptions} thought(s) with descriptions that restate the title`,
+      confidence: "low",
+      metadata: { poorDescriptions },
+    });
+  }
+}
+```
+
+IMPORTANT: Apply the signal cap (MAX_SIGNALS_PER_CHANNEL = 3) to these new signals too. Group all vault:health signals under the same channel cap.
+
+### TASK 2: Enhance /next skill with commitment layer awareness
+
+The /next skill is at packages/plugin/src/skill-sources/next/SKILL.md. Currently it operates as a cold-start recommendation engine. Enhance it to read the runtime state.
+
+Create a helper function in packages/plugin/src/adapters/local-execution.ts (or a new file packages/plugin/src/adapters/next-context.ts) that builds the context /next needs:
+
+```typescript
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+
+export interface NextContext {
+  activeCommitments: string;
+  recentCycleResults: string;
+  queueState: string;
+  conditionSummary: string;
+}
+
+export function buildNextContext(vaultRoot: string): NextContext {
+  // Read commitments
+  const commitmentsPath = join(vaultRoot, "ops", "commitments.json");
+  let activeCommitments = "No commitment store found.";
+  if (existsSync(commitmentsPath)) {
+    try {
+      const store = JSON.parse(readFileSync(commitmentsPath, "utf-8"));
+      const active = (store.commitments ?? []).filter((c: any) => c.state === "active");
+      activeCommitments = active.length > 0
+        ? active.map((c: any) => `- [${c.horizon}] ${c.label} (priority ${c.priority})`).join("\n")
+        : "No active commitments.";
+    } catch {
+      activeCommitments = "Could not parse commitments.json.";
+    }
+  }
+
+  // Read recent cycle results from working memory
+  const wmPaths = [
+    join(vaultRoot, "self", "working-memory.md"),
+    join(vaultRoot, "ops", "working-memory.md"),
+  ];
+  let recentCycleResults = "No working memory found.";
+  for (const p of wmPaths) {
+    if (existsSync(p)) {
+      const content = readFileSync(p, "utf-8");
+      recentCycleResults = content.split("\n").slice(-15).join("\n");
+      break;
+    }
+  }
+
+  // Read queue state
+  const queuePath = join(vaultRoot, "ops", "queue", "queue.json");
+  let queueState = "No queue found.";
+  if (existsSync(queuePath)) {
+    try {
+      const queue = JSON.parse(readFileSync(queuePath, "utf-8"));
+      const tasks = Array.isArray(queue.tasks) ? queue.tasks : [];
+      const pending = tasks.filter((t: any) => t.status === "pending").length;
+      const inProgress = tasks.filter((t: any) => t.status === "in-progress").length;
+      const done = tasks.filter((t: any) => t.status === "done").length;
+      queueState = `${pending} pending, ${inProgress} in-progress, ${done} done (${tasks.length} total)`;
+    } catch {
+      queueState = "Could not parse queue.json.";
+    }
+  }
+
+  // Condition summary
+  const conditions: string[] = [];
+  const inboxDir = join(vaultRoot, "inbox");
+  if (existsSync(inboxDir)) {
+    const count = require("fs").readdirSync(inboxDir).filter((f: string) => f.endsWith(".md")).length;
+    if (count > 0) conditions.push(`Inbox: ${count} items`);
+  }
+  const obsDir = join(vaultRoot, "ops", "observations");
+  if (existsSync(obsDir)) {
+    const count = require("fs").readdirSync(obsDir).filter((f: string) => f.endsWith(".md")).length;
+    if (count > 0) conditions.push(`Observations: ${count} pending`);
+  }
+  const tensionDir = join(vaultRoot, "ops", "tensions");
+  if (existsSync(tensionDir)) {
+    const count = require("fs").readdirSync(tensionDir).filter((f: string) => f.endsWith(".md")).length;
+    if (count > 0) conditions.push(`Tensions: ${count} pending`);
+  }
+
+  return {
+    activeCommitments,
+    recentCycleResults,
+    queueState,
+    conditionSummary: conditions.length > 0 ? conditions.join("\n") : "All conditions clear.",
+  };
+}
+```
+
+NOTE: Fix the `require("fs")` calls — use the already-imported `readdirSync` from "fs" instead. I used require as shorthand in the example but you should use the proper import.
+
+Then update packages/plugin/src/index.ts to inject this context when the /next skill is invoked. In the system.transform handler, after the skill injection section, add:
+
+```typescript
+// If /next is active, inject commitment layer context
+if (router?.getActive() === "next") {
+  const nextCtx = buildNextContext(vaultRoot);
+  const contextBlock = [
+    "",
+    "=== RUNTIME CONTEXT (commitment layer) ===",
+    "",
+    "## Active Commitments",
+    nextCtx.activeCommitments,
+    "",
+    "## Recent Cycle Results",
+    nextCtx.recentCycleResults,
+    "",
+    "## Queue State",
+    nextCtx.queueState,
+    "",
+    "## Vault Conditions",
+    nextCtx.conditionSummary,
+    "",
+    "=== END RUNTIME CONTEXT ===",
+  ].join("\n");
+
+  output.system += contextBlock;
+}
+```
+
+Import buildNextContext at the top of index.ts.
+
+## VERIFICATION
+
+After completing all tasks:
+1. Run `pnpm run build` — must complete with 0 errors
+2. Verify local-perception.ts now has 8 condition checks (5 original + 3 new)
+3. Verify the signal cap is applied to vault:health signals
+4. Verify buildNextContext function exists and compiles
+5. Verify index.ts injects runtime context when /next is active
+
+DO NOT modify SKILL.md files, hooks, architecture types, or test files.

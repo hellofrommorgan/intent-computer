@@ -1,0 +1,422 @@
+You are working on the intent-computer monorepo at /Users/morgan/Projects/intent-computer.
+
+## Repo Structure
+
+This is a pnpm workspace monorepo with 4 packages:
+- packages/architecture/ — shared types, ports, domain models (@intent-computer/architecture)
+- packages/plugin/ — opencode plugin with hooks, skills, adapters (@intent-computer/plugin)
+- packages/mcp-server/ — standalone MCP server with 8 tools (@intent-computer/mcp-server)
+- packages/heartbeat/ — autonomy engine, launchd-based (@intent-computer/heartbeat)
+
+TypeScript throughout. Build with `pnpm run build`. All packages compile to dist/ via tsc.
+
+## PHASE A: Foundation — Extract Shared Modules, Cap Signals, Delete Legacy
+
+This phase extracts three shared modules into @intent-computer/architecture, caps perception signal growth, and removes dead legacy scripts.
+
+### TASK 1: Extract shared QueueStore module
+
+PROBLEM: Three independent queue read/write implementations exist with different locking semantics:
+
+1. packages/plugin/src/skills/ralph.ts lines 198-232:
+   - readQueue() uses normalizeQueueFile, writeQueue() uses atomic rename via tmp file + renameSync
+   - NO file locking
+
+2. packages/heartbeat/src/heartbeat.ts lines 134-178:
+   - loadQueue() uses normalizeQueueFile, writeQueue() uses atomic rename via tmp file + renameSync
+   - NO file locking
+
+3. packages/mcp-server/src/local-adapter.ts (search for withQueueLock):
+   - Has file-based locking using queue.lock with O_CREAT|O_EXCL (wx flag)
+   - This is the ONLY implementation with proper locking
+
+The heartbeat and MCP server run simultaneously — without coordinated locking they WILL clobber each other's writes.
+
+SOLUTION: Create packages/architecture/src/queue-store.ts with:
+
+```typescript
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, openSync, closeSync, unlinkSync } from "fs";
+import { join, dirname } from "path";
+import type { PipelineQueueFile } from "./domain.js";
+import { normalizeQueueFile } from "./queue.js";
+
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_POLL_MS = 50;
+
+export function queuePath(vaultRoot: string): string {
+  return join(vaultRoot, "ops", "queue", "queue.json");
+}
+
+export function lockPath(vaultRoot: string): string {
+  return join(vaultRoot, "ops", "queue", "queue.lock");
+}
+
+export async function withQueueLock<T>(vaultRoot: string, fn: () => Promise<T>): Promise<T> {
+  const lock = lockPath(vaultRoot);
+  const dir = dirname(lock);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let fd: number | null = null;
+
+  while (Date.now() < deadline) {
+    try {
+      fd = openSync(lock, "wx");
+      break;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, LOCK_POLL_MS));
+    }
+  }
+
+  if (fd === null) {
+    // Force-release stale lock (older than 30s)
+    try {
+      const stat = await import("fs").then(fs => fs.statSync(lock));
+      if (Date.now() - stat.mtimeMs > 30_000) {
+        unlinkSync(lock);
+        fd = openSync(lock, "wx");
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (fd === null) {
+    throw new Error("Failed to acquire queue lock");
+  }
+
+  try {
+    return await fn();
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
+    try { unlinkSync(lock); } catch { /* ignore */ }
+  }
+}
+
+export function readQueue(vaultRoot: string): PipelineQueueFile {
+  const path = queuePath(vaultRoot);
+  if (!existsSync(path)) {
+    return { version: 1, tasks: [], lastUpdated: new Date().toISOString() };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    return normalizeQueueFile(raw, vaultRoot);
+  } catch {
+    return { version: 1, tasks: [], lastUpdated: new Date().toISOString() };
+  }
+}
+
+export function writeQueue(vaultRoot: string, queue: PipelineQueueFile): void {
+  const path = queuePath(vaultRoot);
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify({
+    version: 1,
+    lastUpdated: queue.lastUpdated,
+    tasks: queue.tasks,
+  }, null, 2), "utf-8");
+  renameSync(tmpPath, path);
+}
+```
+
+Then update packages/architecture/src/index.ts to add: export * from "./queue-store.js";
+
+Then refactor ALL THREE consumers to use these shared functions:
+
+1. In packages/plugin/src/skills/ralph.ts:
+   - Remove the local readQueue() function (lines 198-209)
+   - Remove the local writeQueue() function (lines 211-232)
+   - Import { readQueue, writeQueue, withQueueLock } from "@intent-computer/architecture"
+   - Wrap the queue write operations in withQueueLock()
+   - Update readQueue calls: readQueue(vaultRoot) instead of readQueue(queuePath, vaultRoot)
+
+2. In packages/heartbeat/src/heartbeat.ts:
+   - Remove the local loadQueue() function (lines 134-155)
+   - Remove the local writeQueue() function (lines 157-178)
+   - Import { readQueue, writeQueue, withQueueLock } from "@intent-computer/architecture"
+   - Rename loadQueue calls to readQueue
+   - Wrap write operations in withQueueLock()
+
+3. In packages/mcp-server/src/local-adapter.ts:
+   - Remove the local withQueueLock(), readQueue-equivalent, and writeQueue-equivalent code
+   - Import { readQueue, writeQueue, withQueueLock } from "@intent-computer/architecture"
+   - Use the shared versions
+
+### TASK 2: Extract shared VaultConventions module
+
+PROBLEM: Four files independently define fallback chains for self-knowledge file paths:
+
+1. packages/plugin/src/adapters/local-perception.ts lines 187-214 — candidates array for identity, goals, working-memory, morning-brief
+2. packages/plugin/src/adapters/local-identity.ts lines 62-69 — readFirstExisting with same paths
+3. packages/plugin/src/adapters/local-memory.ts lines 90-96 — findExistingOrDefault for working-memory
+4. packages/heartbeat/src/heartbeat.ts lines 180-189 — loadWorkingMemory with same fallback chain
+
+SOLUTION: Create packages/architecture/src/vault-conventions.ts:
+
+```typescript
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+
+export interface VaultPaths {
+  identity: string[];
+  goals: string[];
+  workingMemory: string[];
+  morningBrief: string[];
+  commitments: string[];
+  queue: string[];
+  inbox: string;
+  thoughts: string;
+  observations: string;
+  tensions: string;
+  sessions: string;
+}
+
+export function vaultPaths(vaultRoot: string): VaultPaths {
+  return {
+    identity: [
+      join(vaultRoot, "self", "identity.md"),
+      join(vaultRoot, "ops", "identity.md"),
+      join(vaultRoot, "identity.md"),
+    ],
+    goals: [
+      join(vaultRoot, "self", "goals.md"),
+      join(vaultRoot, "ops", "goals.md"),
+    ],
+    workingMemory: [
+      join(vaultRoot, "self", "working-memory.md"),
+      join(vaultRoot, "ops", "working-memory.md"),
+    ],
+    morningBrief: [
+      join(vaultRoot, "ops", "morning-brief.md"),
+    ],
+    commitments: [
+      join(vaultRoot, "ops", "commitments.json"),
+    ],
+    queue: [
+      join(vaultRoot, "ops", "queue", "queue.json"),
+    ],
+    inbox: join(vaultRoot, "inbox"),
+    thoughts: join(vaultRoot, "thoughts"),
+    observations: join(vaultRoot, "ops", "observations"),
+    tensions: join(vaultRoot, "ops", "tensions"),
+    sessions: join(vaultRoot, "ops", "sessions"),
+  };
+}
+
+export function readFirstExisting(candidates: string[]): string | null {
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      return readFileSync(p, "utf-8").trim();
+    }
+  }
+  return null;
+}
+
+export function findFirstExistingPath(candidates: string[]): string | null {
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+```
+
+Update packages/architecture/src/index.ts to add: export * from "./vault-conventions.js";
+
+Then refactor consumers:
+1. local-perception.ts — use vaultPaths() and readFirstExisting() instead of inline candidates
+2. local-identity.ts — use vaultPaths() and readFirstExisting() instead of readFirstExisting() private method
+3. local-memory.ts — use vaultPaths() and findFirstExistingPath() instead of findExistingOrDefault()
+4. heartbeat.ts — use vaultPaths() and readFirstExisting() instead of loadWorkingMemory()
+
+### TASK 3: Extract shared parseFrontmatter module
+
+PROBLEM: Two independent frontmatter parsers with different edge-case handling:
+
+1. packages/plugin/src/adapters/local-memory.ts lines 138-174:
+   - Handles quoted strings, inline arrays [item1, item2]
+   - Key matching: /^(\w[\w-]*):\s*(.+)$/
+
+2. packages/mcp-server/src/local-adapter.ts lines 110-130:
+   - Handles quoted strings only
+   - Key matching: colon-split (indexOf)
+
+Additionally, two vocabulary extractors that duplicate logic:
+3. packages/plugin/src/skills/router.ts lines 217-246: Extracts cmd_* from vocabulary section
+4. packages/plugin/src/skills/injector.ts lines 93-124: Extracts all vocabulary keys
+
+SOLUTION: Create packages/architecture/src/frontmatter.ts:
+
+```typescript
+export function parseFrontmatter(content: string): Record<string, any> {
+  if (!content.startsWith("---")) return {};
+  const closingIdx = content.indexOf("---", 3);
+  if (closingIdx === -1) return {};
+
+  const yaml = content.slice(3, closingIdx).trim();
+  const result: Record<string, any> = {};
+
+  for (const line of yaml.split("\n")) {
+    const match = line.match(/^(\w[\w-]*):\s*(.+)$/);
+    if (!match) continue;
+
+    const key = match[1];
+    let value: any = match[2].trim();
+
+    // Handle quoted strings
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    // Handle inline arrays: ["item1", "item2"] or [item1, item2]
+    if (value.startsWith("[") && value.endsWith("]")) {
+      const inner = value.slice(1, -1);
+      value = inner
+        .split(",")
+        .map((s: string) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+export function extractFrontmatterBody(content: string): string {
+  if (!content.startsWith("---")) return content;
+  const closingIdx = content.indexOf("---", 3);
+  if (closingIdx === -1) return content;
+  return content.slice(closingIdx + 3).trim();
+}
+
+export function parseTopicsFromFrontmatter(content: string): string[] {
+  if (!content.startsWith("---")) return [];
+  const closingIdx = content.indexOf("---", 3);
+  if (closingIdx === -1) return [];
+
+  const yaml = content.slice(3, closingIdx).trim();
+  const topicsStart = yaml.indexOf("topics:");
+  if (topicsStart === -1) return [];
+
+  const afterTopics = yaml.slice(topicsStart + "topics:".length);
+  const trimmed = afterTopics.trimStart();
+
+  // Inline array: topics: ["[[a]]", "[[b]]"]
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    if (end === -1) return [];
+    const inner = trimmed.slice(1, end);
+    return inner
+      .split(",")
+      .map(s => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+  }
+
+  // YAML list:
+  // topics:
+  //   - "[[a]]"
+  const items: string[] = [];
+  for (const line of afterTopics.split("\n").slice(1)) {
+    const itemMatch = line.match(/^\s*-\s*(.+)/);
+    if (!itemMatch) break;
+    items.push(itemMatch[1].trim().replace(/^["']|["']$/g, ""));
+  }
+  return items;
+}
+
+export function loadVocabulary(content: string): Record<string, string> {
+  const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---/);
+  if (!frontmatterMatch) return {};
+
+  const yaml = frontmatterMatch[1];
+  const vocab: Record<string, string> = {};
+
+  const vocabParts = yaml.split(/^vocabulary:\n/m);
+  if (vocabParts.length > 1) {
+    for (const line of vocabParts[1].split("\n")) {
+      if (line.length > 0 && !/^[ \t]/.test(line)) break;
+      const m = line.match(/^[ \t]+(\w+):\s*(.+)$/);
+      if (!m) continue;
+      const value = m[2].trim().replace(/^["']|["']$/g, "");
+      if (value.startsWith("-") || value.startsWith("[") || value.startsWith("{")) continue;
+      vocab[m[1]] = value;
+    }
+  }
+
+  return vocab;
+}
+```
+
+Update packages/architecture/src/index.ts to add: export * from "./frontmatter.js";
+
+Then refactor consumers:
+1. packages/plugin/src/adapters/local-memory.ts — replace private extractFrontmatter() with imported parseFrontmatter()
+2. packages/mcp-server/src/local-adapter.ts — replace local parseFrontmatter() with imported version, replace parseTopicsField() with imported parseTopicsFromFrontmatter(), replace extractBody() with imported extractFrontmatterBody()
+3. packages/plugin/src/skills/injector.ts — replace local loadVocabulary() with: read file, call imported loadVocabulary(content)
+4. packages/plugin/src/skills/router.ts — replace local loadVocabulary() with imported version (read file content, call loadVocabulary(content), then filter for cmd_* keys as needed)
+
+### TASK 4: Cap perception signals and umwelt growth
+
+PROBLEM: The system prompt grows unbounded as the vault grows:
+
+1. packages/plugin/src/adapters/local-perception.ts lines 67-79:
+   - Emits ONE signal PER inbox item with no cap
+   - A vault with 20 inbox items = 20 individual signals
+
+2. packages/plugin/src/adapters/local-identity.ts lines 145-176:
+   - buildUmwelt() merges ALL perception signals + ALL gaps + 20 lines of working memory
+   - No total cap on umwelt size
+
+SOLUTION:
+
+In local-perception.ts, replace the inbox signal loop (lines 67-79) with:
+- Emit at most 3 individual inbox item signals
+- If there are more than 3, emit a summary signal: "N inbox items pending (showing first 3: item1, item2, item3)"
+- Apply the same cap (max 3 + summary) to ALL signal channels
+
+Add constants at the top of the file:
+```typescript
+const MAX_SIGNALS_PER_CHANNEL = 3;
+```
+
+In local-identity.ts, cap the umwelt in buildUmwelt():
+- After merging all sources, cap total umwelt lines at 50
+- If over 50, keep the first 10 (working memory) + last 40 (most recent signals/gaps)
+- Add a constant: const MAX_UMWELT_LINES = 50;
+
+### TASK 5: Delete legacy scripts
+
+Delete these files entirely:
+- scripts/install-triggers.js (183 lines, references heartbeat.sh which is superseded by packages/heartbeat/)
+- scripts/check-conditions.js (superseded by packages/heartbeat/src/heartbeat.ts)
+- scripts/uninstall-triggers.js (companion to install-triggers.js)
+
+These are dead code — the TS heartbeat in packages/heartbeat/ replaces all of them.
+
+### TASK 6: Clean package.json
+
+Edit the ROOT package.json at /Users/morgan/Projects/intent-computer/package.json:
+
+1. Remove these three scripts that reference the deleted legacy files:
+   - "triggers:install": "node scripts/install-triggers.js"
+   - "triggers:uninstall": "node scripts/uninstall-triggers.js"
+   - "triggers:check": "node scripts/check-conditions.js"
+
+2. Add tsx to devDependencies: "tsx": "^4.0.0"
+
+3. Keep all other scripts and dependencies unchanged.
+
+## VERIFICATION
+
+After completing all tasks:
+1. Run `pnpm run build` — must complete with 0 errors across all 4 packages
+2. Verify no TypeScript errors: `pnpm run typecheck` (if available) or check build output
+3. Verify the deleted scripts are gone: `ls scripts/install-triggers.js` should fail
+4. Verify the new shared modules exist:
+   - packages/architecture/src/queue-store.ts
+   - packages/architecture/src/vault-conventions.ts
+   - packages/architecture/src/frontmatter.ts
+5. Verify imports compile: each consumer file should import from @intent-computer/architecture
+
+DO NOT modify any SKILL.md files, any test files, or any hook files (src/hooks/*). Focus exclusively on the extraction, capping, and cleanup tasks listed above.

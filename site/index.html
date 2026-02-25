@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Intent Computer</title>
+<meta name="description" content="Persistent context and skill graphs for openclaw.">
+<meta property="og:title" content="The Intent Computer">
+<meta property="og:description" content="Give openclaw a persistent context graph and composable skill graph.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%96%B8</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-mark">the intent computer</a>
+  <div class="nav-links">
+    <a href="/context">context graph</a>
+    <a href="/skills">skill graph</a>
+    <a href="/loop">the loop</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <section class="hero">
+    <h1 class="hero-title"><span class="hero-name">The Intent Computer</span> gives <a href="https://openclaw.ai" target="_blank" rel="noopener" class="hero-link">openclaw</a> a memory that persists and skills that compose.</h1>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="lede">Every agent starts from zero. It doesn't know what you decided yesterday, what you were debugging before lunch, or why you picked Postgres over SQLite. You re-explain. You repeat yourself. You lose momentum. The Intent Computer plugs into openclaw and gives it two things: a <strong>context graph</strong> that remembers everything across sessions, and a <strong>skill graph</strong> of capabilities that grow with your workflow.</p>
+  </section>
+
+  <hr>
+
+  <section class="cards">
+    <a href="/context" class="card">
+      <h2 class="card-title">Context Graph</h2>
+      <p class="card-desc">Your agent's long-term memory. It captures your decisions, your reasoning, and what you were working on &mdash; then uses all of it the next time you start a session.</p>
+      <span class="card-link">/context &rarr;</span>
+    </a>
+
+    <a href="/skills" class="card">
+      <h2 class="card-title">Skill Graph</h2>
+      <p class="card-desc">Capabilities your agent can learn and reuse. Not hardcoded tools &mdash; composable instructions that chain together and adapt to how you work.</p>
+      <span class="card-link">/skills &rarr;</span>
+    </a>
+
+    <a href="/loop" class="card">
+      <h2 class="card-title">The Intent Loop</h2>
+      <p class="card-desc">The decision engine underneath. Every turn, your agent reads your context, checks what matters, and decides what to do &mdash; before you ask.</p>
+      <span class="card-link">/loop &rarr;</span>
+    </a>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2 class="section-title">How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">01</span>
+        <div>
+          <h3 class="step-title">Install the plugin</h3>
+          <p class="step-desc">One line in your openclaw config. No new tools to learn. Your workflow stays the same.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">02</span>
+        <div>
+          <h3 class="step-title">It remembers as you work</h3>
+          <p class="step-desc">The plugin watches what you decide, what you build, and what you learn. It writes this down automatically &mdash; as connected notes on your filesystem, versioned in git. You don't have to do anything.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">03</span>
+        <div>
+          <h3 class="step-title">It picks up new skills</h3>
+          <p class="step-desc">Skills are reusable instructions your agent follows &mdash; like "extract the key decisions from this conversation" or "find connections to what I worked on last week." They chain together and get better over time.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">04</span>
+        <div>
+          <h3 class="step-title">Every session starts warm</h3>
+          <p class="step-desc">When you open a new session, your agent already knows what you were doing, what you care about, and what needs attention. Session 50 knows everything session 1 learned.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="kicker">Your agent should remember what you meant, not just what you said.</p>
+    <form class="email-form" id="notify-form">
+      <input type="email" placeholder="your@email.com" aria-label="Email address" required>
+      <button type="submit">notify me</button>
+    </form>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="compat-label">Also compatible with</p>
+    <p class="compat-list"><a href="https://opencode.ai" target="_blank" rel="noopener">opencode</a> &middot; <a href="https://claude.ai/code" target="_blank" rel="noopener">Claude Code</a> &middot; <a href="https://pi.dev" target="_blank" rel="noopener">Pi Mono</a></p>
+  </section>
+
+  <footer class="footer">&copy; 2026 Intent Computer</footer>
+
+</div>
+
+<script>
+document.getElementById('notify-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var input = this.querySelector('input');
+  var btn = this.querySelector('button');
+  if (input.value) {
+    btn.textContent = 'understood.';
+    btn.style.pointerEvents = 'none';
+    input.disabled = true;
+    input.placeholder = input.value;
+    input.value = '';
+  }
+});
+</script>
+
+</body>
+</html>
