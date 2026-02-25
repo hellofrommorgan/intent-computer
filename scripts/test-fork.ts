@@ -22,14 +22,51 @@
 import { forkSkill, type ForkOptions } from "../packages/plugin/src/skills/fork.js";
 import { loadSkillInstructions } from "../packages/plugin/src/skills/injector.js";
 import { runPipeline } from "../packages/plugin/src/skills/pipeline.js";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, mkdtempSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import type { PluginInput } from "@opencode-ai/plugin";
 
 // ─── Test config ──────────────────────────────────────────────────────────────
 
-const VAULT_ROOT = join(process.env.HOME!, "Mind");
+const VAULT_ROOT = mkdtempSync(join(tmpdir(), "intent-test-fork-"));
 const TEST_FILE = join(VAULT_ROOT, "inbox", "2026-02-19-vector-db-architecture-mechanisms.md");
+
+// Create temporary structure
+mkdirSync(join(VAULT_ROOT, "inbox"), { recursive: true });
+mkdirSync(join(VAULT_ROOT, "ops"), { recursive: true });
+writeFileSync(TEST_FILE, "Test content for fork testing.", "utf-8");
+writeFileSync(
+  join(VAULT_ROOT, "ops", "derivation-manifest.md"),
+  `---
+vocabulary:
+  cmd_reflect: 'reflect'
+  cmd_reweave: 'reweave'
+  cmd_verify: 'verify'
+  notes: 'notes'
+  note: 'note'
+  note_plural: 'notes'
+  topic_map: 'topic_map'
+  topic_map_plural: 'topic_maps'
+  inbox: 'inbox'
+  notes_collection: 'notes_collection'
+  rethink: 'rethink'
+  ops: 'ops'
+  config_file: 'config.json'
+  domain: 'domain'
+  reduce: 'reduce'
+  reflect: 'reflect'
+  rethink: 'rethink'
+  reweave: 'reweave'
+  verify: 'verify'
+---
+`,
+  "utf-8"
+);
+
+process.on("exit", () => {
+  rmSync(VAULT_ROOT, { recursive: true, force: true });
+});
 
 // ─── Mock client ──────────────────────────────────────────────────────────────
 
