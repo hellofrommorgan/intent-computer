@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "The intent computer — a five-layer cognitive architecture for agent computing",
+  "bin": {
+    "intent-computer": "./scripts/install.ts"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
@@ -13,7 +16,11 @@
     "test:fork": "npx tsx scripts/test-fork.ts",
     "test:runtime": "npx tsx scripts/test-runtime.ts",
     "test:regressions": "npx tsx scripts/test-regressions.ts",
-    "controller": "npx tsx scripts/controller.ts"
+    "controller": "npx tsx scripts/controller.ts",
+    "install:opencode": "npx tsx scripts/install.ts --opencode",
+    "install:claude-code": "npx tsx scripts/install.ts --claude-code",
+    "install:pi": "npx tsx scripts/install.ts --pi",
+    "install:openclaw": "npx tsx scripts/install.ts --openclaw"
   },
   "devDependencies": {
     "tsx": "^4.0.0",

@@ -1,0 +1,21 @@
+{
+  "name": "@intent-computer/openclaw-hooks",
+  "version": "0.1.0",
+  "description": "OpenClaw hook pack for the intent-computer knowledge system",
+  "type": "module",
+  "openclaw": {
+    "hooks": {
+      "session-orient": "./hooks/session-orient",
+      "write-validate": "./hooks/write-validate",
+      "session-capture": "./hooks/session-capture"
+    }
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-hooks",
+    "intent-computer",
+    "knowledge-management",
+    "agent-memory"
+  ],
+  "license": "MIT"
+}

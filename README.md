@@ -1,154 +1,118 @@
-# intent-computer
+# [intent-computer](https://github.com/hellofrommorgan/intent-computer)
 
-The bicycle for the mind, ported to opencode. intent-computer is an `@opencode-ai/plugin` package that implements the ars-contexta knowledge system — giving opencode sessions persistent memory, schema enforcement, and a full library of thinking skills that survive across sessions. It turns the gap between knowing and doing into a closed loop: vault context injected at session start, notes validated on write, sessions captured on exit, and working memory updated automatically so the next session starts knowing who you are and what you were doing.
+**The intent computer -- a protocol for intent realization.**
 
-## What it does
+A five-layer cognitive architecture that gives AI agents persistent identity, memory, and autonomy. You bring the intent. The system closes the loop between knowing and doing -- vault context injected at session start, notes validated on write, sessions captured on exit, working memory updated so the next session starts knowing who you are and what you were doing.
 
-Two layers — hooks that run automatically, and skills you invoke on demand.
+## What is this?
 
-### Hooks (always-on)
+Most agent tooling treats the human as a prompt engineer and the agent as a stateless function. The intent computer inverts this.
 
-| Hook | Trigger | What it does |
-|------|---------|--------------|
-| `sessionOrient` | Every LLM call, and after context compaction | Injects vault structure, working-memory.md, morning-brief.md, goals.md, and identity.md into the system prompt. Also surfaces maintenance conditions (inbox pressure, orphan count, unprocessed sessions). |
-| `writeValidate` | After every `write` tool call on a vault note | Validates YAML frontmatter: presence of `description` and `topics` fields, description length, description not identical to title. Warnings are appended to the write output so the model sees them immediately. |
-| `autoCommit` | After every `write` tool call on a vault note (async, non-blocking) | Stages the changed note plus `self/`, `ops/`, and `inbox/`, then commits. Vault history stays clean without manual git. |
-| `sessionCapture` | On `session.deleted` | Writes session metadata JSON to `ops/sessions/` and commits the artifact. |
-| `sessionContinuity` | On `session.deleted` (async) | Calls an LLM to review what changed during the session and update `self/working-memory.md`. Next session starts warm. |
-
-All hooks are vault-scoped. They short-circuit immediately if the current worktree is not a vault (detected via `.arscontexta` marker, `ops/config.yaml`, or legacy `.claude/hooks/session-orient.sh`).
-
-### Skills (invoked on demand)
-
-Skills are SKILL.md instruction files — structured prompts the model follows when you invoke a command. Two categories:
-
-**skill-sources/** — operational skills for working with your vault: `reduce`, `reflect`, `reweave`, `verify`, `validate`, `seed`, `ralph`, `pipeline`, `tasks`, `stats`, `graph`, `next`, `learn`, `remember`, `rethink`, `refactor`.
-
-**plugin-skills/** — system management: `setup`, `help`, `health`, `ask`, `recommend`, `architect`, `add-domain`, `reseed`, `tutorial`, `upgrade`.
-
-Skills use `{vocabulary.*}` placeholders resolved from `ops/derivation-manifest.md`, so the same skill works in vaults with different domain vocabularies (`thoughts/` vs `notes/` vs `claims/`).
-
-## Installation
-
-Add to your vault's `opencode.json`:
-
-```json
-{
-  "plugin": ["intent-computer"]
-}
-```
-
-Install the package:
-
-```bash
-npm install intent-computer
-# or: npx intent-computer (once published)
-```
-
-If you don't have a vault yet, run `/setup` inside opencode after installing. It walks you through the derivation conversation and generates your full vault structure.
-
-## Skill sync
-
-Skills live in the package's `src/skill-sources/` and `src/plugin-skills/` directories. The sync script deploys them to your vault and registers them as opencode commands:
-
-```bash
-npm run sync
-# or with a custom vault path:
-node scripts/sync-skills.js ~/path/to/vault
-# preview what would sync without writing:
-node scripts/sync-skills.js --dry-run
-```
-
-What it does:
-- Copies each `SKILL.md` to `{vault}/.opencode/skills/{name}/SKILL.md`
-- Generates command stubs at `{vault}/.opencode/commands/{name}.md` and `~/.config/opencode/commands/{name}.md`
-- Skips any skill with `status: stub` or `status: TODO` in frontmatter
-
-After sync, skills appear in the opencode command picker as `/arscontexta:{name}`.
-
-## Requirements
-
-- opencode (latest)
-- Node.js 18+
-- Git (for auto-commit hook)
-- qmd (optional — enables semantic search via MCP; configured by `/setup` if present)
-- A vault initialized with `/setup` or the ars-contexta system
+- **Intent is the primitive, not instructions.** The system does not execute commands. It receives intent -- a statement of what you want to be true -- and routes it through perception, identity, commitment, memory, and execution. Every computation traces back to a human reason.
+- **Persistent identity and memory across sessions.** The agent reads its identity before loading capabilities. Working memory, goals, and context survive session boundaries. Session N+1 starts where session N left off.
+- **Files are the canonical state.** Markdown, YAML frontmatter, wiki links, git history. Human-readable, version-controlled, portable. No database. No proprietary format. The filesystem is the database; ripgrep is the query engine.
+- **Amplifies intent without generating it.** The system never invents its own reasons to act. It is a bicycle for the mind -- it makes your thinking faster and more connected, but the direction is always yours.
 
 ## Architecture
 
-### Vault detection
+The intent computer implements a five-layer loop:
 
-`vaultguard.ts` checks for `.arscontexta` marker, `ops/config.yaml` (auto-creates the marker for migration), or legacy `.claude/hooks/session-orient.sh`. Every hook calls `isVault()` on the worktree path and returns immediately if no vault is detected. This means the plugin is safe to install globally — it's a no-op in non-vault projects.
+```
+Perception --> Identity --> Commitment --> Memory --> Execution
+    ^                                                    |
+    +----------------------------------------------------+
+```
 
-### Hooks vs skills
+**Perception** ingests signals from the environment (session context, vault state, maintenance conditions). **Identity** loads the agent's normative structure, determining what matters and what doesn't. **Commitment** evaluates intent against identity and decides what to act on. **Memory** reads and writes durable state (thoughts, maps, working memory). **Execution** dispatches actions through policy-gated skill invocation.
 
-Hooks are TypeScript functions wired to opencode's plugin event system in `src/index.ts`. They run transparently — no invocation needed. Skills are instruction files the model reads and follows when you invoke a command; they are not TypeScript code.
+The loop runs continuously. The heartbeat keeps it running between sessions.
 
-### Vocabulary substitution
+### Packages
 
-Skills reference placeholders like `{vocabulary.notes}` and `{vocabulary.reduce}`. At runtime, `src/skills/injector.ts` reads `ops/derivation-manifest.md` from the active vault and substitutes these before the skill instructions reach the model. This is what makes one skill package serve vaults with different domain vocabularies.
+| Package | Purpose |
+|---------|---------|
+| `@intent-computer/architecture` | Canonical domain types, port interfaces, and contract definitions |
+| `@intent-computer/plugin` | Runtime hooks, skills, and vocabulary resolution for coding agents |
+| `@intent-computer/heartbeat` | Between-session autonomy engine -- evaluates commitments, processes queues, updates the morning brief |
+| `@intent-computer/mcp-server` | MCP server implementing the storage and retrieval boundary |
 
-### Note path detection
+## Platform Support
 
-`isNotePath()` in `vaultguard.ts` recognizes note writes by path segment: `/thoughts/`, `/notes/`, `/thinking/`, `/claims/`. Write validation and auto-commit only fire for paths matching these segments. Custom vocabulary paths are resolved via `ops/derivation-manifest.md` after setup.
+| Platform | Install | Status |
+|----------|---------|--------|
+| [OpenCode](https://opencode.ai) | Add `"intent-computer"` to `opencode.json` plugins | Native |
+| [Claude Code](https://claude.ai/code) | `npx intent-computer install --claude-code` | Supported |
+| [pi.dev](https://pi.dev) | `npx intent-computer install --pi` | Supported |
+| [OpenClaw](https://openclaw.ai) | `openclaw plugins install intent-computer` | Supported |
 
-### Holistic runtime
+## Quick Start
 
-The repository includes a domain-first architecture module and a live plugin runtime wiring for the full intent computer loop (perception -> identity -> commitment -> memory -> execution):
+```bash
+# Install
+npm install intent-computer
 
-- `packages/architecture/src/domain.ts`
-- `packages/architecture/src/ports.ts`
-- `packages/architecture/src/intent-loop.ts`
-- `packages/architecture/src/holistic-runtime.ts`
-- `packages/architecture/src/mcp-contracts.ts`
-- `packages/architecture/src/saas-contracts.ts`
-- `packages/architecture/src/queue.ts`
-- `docs/HOLISTIC-ARCHITECTURE.md`
+# Run setup (interactive -- creates your vault)
+# Then use /setup in your coding agent
+```
 
-Runtime behavior now includes:
-- Per-turn intent ingestion from chat/commands (no hardcoded actor or static intent text)
-- Execution dispatch with policy gates via `ops/runtime-policy.json`
-- Canonical queue schema migration (`version: 1`) across plugin, MCP server, and heartbeat
-- Runtime cycle logs at `ops/runtime/cycles/*.json` and session events at `ops/runtime/session-events.jsonl`
+The `/setup` command walks you through a derivation conversation, generates your vault structure, wires hooks, and deploys skills. The vault is yours -- plain files in a git repo.
 
-### Data feed scaffold
+## Hooks (Always-On)
 
-The repository also includes an additive `packages/plugin/src/data-feed/` scaffold for ingesting external activity (browser history, email, webhook sources) into vault inbox artifacts without changing current hooks/runtime:
+Hooks run automatically. No invocation needed. They short-circuit immediately in non-vault projects.
 
-- contracts + canonical event model
-- cursor/checkpoint runtime
-- policy layer (allowlist + sensitivity + redaction)
-- vault inbox sink
-- local Chrome history connector (safe SQLite snapshot read)
-- Gmail / Microsoft Graph / IMAP connector stubs with incremental-sync cursor semantics
-- research/design notes in `docs/DATA-FEED-RESEARCH.md`
+| Hook | Trigger | What it does |
+|------|---------|--------------|
+| **Session Orient** | Every LLM call + context compaction | Injects identity, working memory, goals, and morning brief into the system prompt. Surfaces maintenance conditions. |
+| **Write Validate** | After every write to a vault note | Validates YAML frontmatter: required fields, description quality, schema compliance. Warnings surface inline. |
+| **Auto Commit** | After every write to a vault note | Stages and commits the change. Vault history stays clean without manual git. |
+| **Session Capture** | On session end | Writes session metadata to `ops/sessions/` and commits the artifact. |
+| **Session Continuity** | On session end | Updates `self/working-memory.md` so the next session starts warm. |
+
+## Skills (On Demand)
+
+Skills are structured instruction files (`SKILL.md`) the agent follows when you invoke a command. Vocabulary placeholders make them portable across vaults with different naming conventions.
+
+**Operational skills** -- working with your vault:
+
+`reduce` `reflect` `reweave` `verify` `validate` `seed` `ralph` `pipeline` `tasks` `stats` `graph` `next` `learn` `remember` `rethink` `refactor` `reanalyze`
+
+**Plugin skills** -- system management:
+
+`setup` `help` `health` `ask` `recommend` `architect` `add-domain` `reseed` `tutorial` `upgrade`
+
+## The Intent Loop
+
+The loop is not a pipeline that runs once. It is a continuous cycle.
+
+During a session, the plugin drives the loop: orient loads context (perception + identity), skills execute within policy gates (commitment + execution), hooks persist state (memory). Between sessions, the heartbeat takes over -- evaluating pending commitments, processing queued work, and preparing the morning brief for the next session.
+
+**Authority levels** govern what the system can do autonomously: `none`, `advisory`, `delegated`, `autonomous`. Authority is earned through demonstrated judgment, not granted by default. The heartbeat starts advisory and escalates only when configured.
 
 ## Development
 
 ```bash
-# Build TypeScript
-npm run build
-
-# Type check without emitting
-npm run typecheck
-
-# Watch mode
-npm run dev
-
-# Sync skills to ~/Mind vault
-npm run sync
-
-# Sync to a different vault
-node scripts/sync-skills.js ~/path/to/test-vault
-
-# Dry-run — see what would sync
-node scripts/sync-skills.js --dry-run
-
-# Runtime + queue + heartbeat integration checks
-npm run test:runtime
-
-# Heartbeat with aligned-task execution (runner command receives task context via env vars)
-node packages/heartbeat/dist/index.js --vault ~/Mind --execute-aligned --runner-cmd "./ops/scripts/heartbeat-runner.sh"
+pnpm install
+pnpm build
+pnpm test
 ```
 
-To test hooks against a real vault, open the vault directory in opencode with the plugin installed. Session orient fires on every LLM call; write validate fires whenever you ask the model to write a note.
+The test suite covers architecture contracts, runtime integration, regression cases, and fork compatibility.
+
+## Principles
+
+Seven zeroth principles define the structural commitments of the intent computer. These are not aspirational -- they are load-bearing. A system that violates one is a different system.
+
+- **Z0: Intentionality precedes computation.** Without a reason to compute, computation is noise.
+- **Z1: Identity precedes capability.** Before "what can it do?" answer "who is doing it?"
+- **Z2: Context is the computer.** The context window is the computational substrate, not a cache.
+- **Z3: Relation precedes representation.** Capabilities emerge through interaction, not from pre-built catalogs.
+- **Z4: Compression is the direction of intelligence.** Intelligence moves toward less, not more.
+- **Z5: Error is signal, not noise.** Failures are the learning mechanism, not bugs to suppress.
+- **Z6: Autonomy is temporal, not spatial.** The agent that acts when conditions demand it is fundamentally different from one that waits.
+
+Full treatment with formal anchors and diagnostics: [`docs/vision/PRINCIPLES.md`](docs/vision/PRINCIPLES.md)
+
+## License
+
+MIT
