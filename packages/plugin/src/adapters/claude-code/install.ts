@@ -78,6 +78,18 @@ export function generateHooksConfig(adapterDir: string, vaultPath?: string): Hoo
           ],
         },
       ],
+      Stop: [
+        {
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `${envPrefix}npx tsx ${join(adapterDir, "stop-capture.ts")}`,
+              timeout: 15,
+            },
+          ],
+        },
+      ],
       SessionEnd: [
         {
           matcher: "",
@@ -153,6 +165,7 @@ function main(): void {
   console.log(`  Hooks:`);
   console.log(`    SessionStart  -> session-start.ts`);
   console.log(`    PostToolUse   -> post-tool-use.ts (Write|Edit)`);
+  console.log(`    Stop          -> stop-capture.ts`);
   console.log(`    SessionEnd    -> session-end.ts`);
   console.log(`\nRestart Claude Code to activate.`);
 }

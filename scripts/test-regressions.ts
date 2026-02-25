@@ -23,6 +23,14 @@ import { forkSkill } from "../packages/plugin/src/skills/fork.js";
 import { buildHelpText } from "../packages/plugin/src/skills/help.js";
 import { createRouter } from "../packages/plugin/src/skills/router.js";
 import { findAlignedTasks } from "../packages/heartbeat/src/heartbeat.js";
+import {
+  detectCapturableInsights,
+  isDuplicateCapture,
+  parseTranscriptLines,
+  extractRecentAssistantText,
+  normalizeForComparison,
+  slugify,
+} from "../packages/plugin/src/adapters/claude-code/capture-heuristic.js";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -482,7 +490,9 @@ function testGraphScanExcludesCodeBlockExamples(): void {
 async function testWriteValidateWarnsOnNonKebabFileName(): Promise<void> {
   const vault = createTempVault();
   try {
-    const path = join(vault, "thoughts", "Mixed Case Title.md");
+    // Use a kebab-case filename — write-validate warns when a vault file IS kebab-case,
+    // since vault convention is prose-with-spaces.
+    const path = join(vault, "thoughts", "mixed-case-title.md");
     writeFileSync(
       path,
       `---\ndescription: \"desc long enough for validation\"\ntopics: [\"[[topic]]\"]\n---\n\nbody\n`,
@@ -490,10 +500,122 @@ async function testWriteValidateWarnsOnNonKebabFileName(): Promise<void> {
     );
 
     const warning = await writeValidate(path);
-    assert(warning?.includes("kebab-case"), "write validation should warn on non-kebab filenames");
+    assert(warning?.includes("kebab-case"), "write validation should warn on kebab-case filenames");
   } finally {
     rmSync(vault, { recursive: true, force: true });
   }
+}
+
+// ─── Stop-capture heuristic tests ────────────────────────────────────────────
+
+function testDetectCapturableInsightsStrongSignal(): void {
+  const text = "After investigating, the root cause is that the retry logic fires before token propagation completes. This breaks all downstream auth checks.";
+  const captures = detectCapturableInsights(text);
+  assert(captures.length > 0, "strong-signal phrase should produce at least one capture");
+  assert(
+    captures.some((c) => c.confidence >= 1 && c.claim.length > 10),
+    "capture should have claim with sufficient length",
+  );
+}
+
+function testDetectCapturableInsightsNoiseRejection(): void {
+  // Vague/generic text that should not trigger capture
+  const text = "Let me look at the code and see what's going on. I'll check the files now.";
+  const captures = detectCapturableInsights(text);
+  assert(captures.length === 0, "generic assistant chatter should not produce captures");
+}
+
+function testDetectCapturableInsightsShortTextRejected(): void {
+  const text = "OK";
+  const captures = detectCapturableInsights(text);
+  assert(captures.length === 0, "text too short to contain meaningful insights should return empty");
+}
+
+function testExtractRecentAssistantTextFiltersUserMessages(): void {
+  const lines = [
+    JSON.stringify({ type: "user", message: { role: "user", content: "What is the root cause?" } }),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "The root cause is that the cache is not invalidated on write." }] } }),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "internal thinking" }, { type: "text", text: "So the fix is to clear the cache after each write." }] } }),
+  ];
+  const entries = parseTranscriptLines(lines);
+  const text = extractRecentAssistantText(entries, 5);
+  assert(!text.includes("What is the root cause?"), "user messages should be excluded from extracted text");
+  assert(text.includes("root cause"), "assistant text should be included");
+  assert(!text.includes("internal thinking"), "thinking blocks should not appear in text");
+}
+
+function testParseTranscriptLinesSkipsMalformed(): void {
+  const lines = [
+    "not json at all",
+    JSON.stringify({ type: "file-history-snapshot", messageId: "x" }),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", content: "real content" } }),
+    "",
+    "{ broken",
+  ];
+  const entries = parseTranscriptLines(lines);
+  assert(entries.length === 1, "should parse exactly one valid assistant entry from mixed input");
+  assert(entries[0]?.type === "assistant", "parsed entry should be the assistant message");
+}
+
+function testIsDuplicateCaptureDetectsHighOverlap(): void {
+  const dir = mkdtempSync(join(tmpdir(), "intent-dedup-"));
+  try {
+    const claim = "the retry logic fires before token propagation";
+    writeFileSync(
+      join(dir, "existing.md"),
+      `---\ntitle: "the retry logic fires before token propagation"\nsource: "session-capture"\n---\n\nsome context\n`,
+      "utf-8",
+    );
+    assert(isDuplicateCapture(claim, dir), "identical claim should be flagged as duplicate");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function testIsDuplicateCaptureAllowsDistinctClaims(): void {
+  const dir = mkdtempSync(join(tmpdir(), "intent-dedup-distinct-"));
+  try {
+    writeFileSync(
+      join(dir, "existing.md"),
+      `---\ntitle: "the cache is not invalidated on write"\nsource: "session-capture"\n---\n\ncontext\n`,
+      "utf-8",
+    );
+    assert(
+      !isDuplicateCapture("the retry logic fires before token propagation", dir),
+      "distinct claims should not be flagged as duplicates",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function testIsDuplicateCaptureHandlesMissingInbox(): void {
+  const result = isDuplicateCapture("some claim here", "/nonexistent/path/inbox");
+  assert(!result, "missing inbox directory should be treated as no duplicates");
+}
+
+function testNormalizeForComparisonStripsSpecialChars(): void {
+  const raw = "The fix is: call `flush()` before exit!";
+  const normalized = normalizeForComparison(raw);
+  assert(!normalized.includes(":"), "normalized string should not contain colons");
+  assert(!normalized.includes("`"), "normalized string should not contain backticks");
+  assert(normalized.length <= 60, "normalized string should be capped at 60 chars");
+}
+
+function testSlugifyProducesKebabCase(): void {
+  const claim = "the retry logic fires before token propagation";
+  const slug = slugify(claim);
+  assert(/^[a-z0-9-]+$/.test(slug), "slug should only contain lowercase letters, numbers, and hyphens");
+  assert(!slug.startsWith("-") && !slug.endsWith("-"), "slug should not start or end with hyphens");
+  assert(slug.length <= 60, "slug should be capped at 60 chars");
+}
+
+function testStopCaptureHookRegistered(): void {
+  // Verify the install.ts config includes the Stop hook pointing to stop-capture.ts
+  const installPath = join(process.cwd(), "packages/plugin/src/adapters/claude-code/install.ts");
+  const content = readFileSync(installPath, "utf-8");
+  assert(content.includes("stop-capture.ts"), "install.ts should register stop-capture.ts as a Stop hook");
+  assert(content.includes("Stop:"), "install.ts hooks config should include Stop event key");
 }
 
 async function main(): Promise<void> {
@@ -512,6 +634,17 @@ async function main(): Promise<void> {
     { name: "graph scan excludes code block examples", run: testGraphScanExcludesCodeBlockExamples },
     { name: "write validation kebab-case warning", run: testWriteValidateWarnsOnNonKebabFileName },
     { name: "runtime MCP boundary preserved", run: testRuntimeMcpBoundaryPreserved },
+    { name: "stop-capture: strong signal produces capture", run: testDetectCapturableInsightsStrongSignal },
+    { name: "stop-capture: generic noise rejected", run: testDetectCapturableInsightsNoiseRejection },
+    { name: "stop-capture: short text rejected", run: testDetectCapturableInsightsShortTextRejected },
+    { name: "stop-capture: transcript parser filters user messages", run: testExtractRecentAssistantTextFiltersUserMessages },
+    { name: "stop-capture: transcript parser skips malformed lines", run: testParseTranscriptLinesSkipsMalformed },
+    { name: "stop-capture: dedup flags identical claim", run: testIsDuplicateCaptureDetectsHighOverlap },
+    { name: "stop-capture: dedup allows distinct claims", run: testIsDuplicateCaptureAllowsDistinctClaims },
+    { name: "stop-capture: dedup handles missing inbox", run: testIsDuplicateCaptureHandlesMissingInbox },
+    { name: "stop-capture: normalize strips special chars", run: testNormalizeForComparisonStripsSpecialChars },
+    { name: "stop-capture: slugify produces kebab-case", run: testSlugifyProducesKebabCase },
+    { name: "stop-capture: Stop hook registered in install.ts", run: testStopCaptureHookRegistered },
   ];
 
   let passed = 0;
