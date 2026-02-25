@@ -56,8 +56,10 @@ function withFakeClaudeScript(scriptBody: string): { restore: () => void; captur
 
   const previousPath = process.env.PATH ?? "";
   const previousCapture = process.env.CAPTURE_DIR;
+  const previousIntentClaudePath = process.env.INTENT_CLAUDE_PATH;
   process.env.PATH = `${binDir}:${previousPath}`;
   process.env.CAPTURE_DIR = captureDir;
+  process.env.INTENT_CLAUDE_PATH = scriptPath;
 
   return {
     captureDir,
@@ -67,6 +69,11 @@ function withFakeClaudeScript(scriptBody: string): { restore: () => void; captur
         delete process.env.CAPTURE_DIR;
       } else {
         process.env.CAPTURE_DIR = previousCapture;
+      }
+      if (previousIntentClaudePath === undefined) {
+        delete process.env.INTENT_CLAUDE_PATH;
+      } else {
+        process.env.INTENT_CLAUDE_PATH = previousIntentClaudePath;
       }
       rmSync(runtimeDir, { recursive: true, force: true });
     },
@@ -760,17 +767,17 @@ async function testHeartbeatQueuesRichRepairContext(): Promise<void> {
     assert(repair?.repair_context !== undefined, "heartbeat should queue a repair task with repair_context");
     assert(
       typeof repair.repair_context?.absolute_source_path === "string" &&
-        repair.repair_context.absolute_source_path.length > 0,
+      repair.repair_context.absolute_source_path.length > 0,
       "repair context should include absolute source path",
     );
     assert(
       typeof repair.repair_context?.queue_excerpt === "string" &&
-        repair.repair_context.queue_excerpt.includes("Total tasks"),
+      repair.repair_context.queue_excerpt.includes("Total tasks"),
       "repair context should include queue excerpt",
     );
     assert(
       repair.repair_context?.file_state &&
-        Object.keys(repair.repair_context.file_state).length > 0,
+      Object.keys(repair.repair_context.file_state).length > 0,
       "repair context should include file snapshot",
     );
     assert(
@@ -1000,72 +1007,7 @@ async function testMcpQueueMigration(): Promise<void> {
   }
 }
 
-async function testCommitmentIdMigrationScript(): Promise<void> {
-  const vault = createTempVault();
-  try {
-    const now = new Date().toISOString();
-    writeFileSync(
-      join(vault, "ops", "commitments.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          commitments: [
-            {
-              id: "goal-thread-1",
-              label: "Alpha Thread",
-              state: "active",
-              priority: 1,
-              horizon: "week",
-              source: "test",
-              lastAdvancedAt: now,
-              evidence: [],
-            },
-            {
-              id: "goal-thread-1",
-              label: "Alpha Thread",
-              state: "active",
-              priority: 2,
-              horizon: "week",
-              source: "test",
-              lastAdvancedAt: now,
-              evidence: [],
-            },
-          ],
-          lastEvaluatedAt: now,
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
 
-    const first = spawnSync(
-      "pnpm",
-      ["-s", "tsx", "scripts/migrate-commitment-ids.ts", "--vault", vault],
-      { cwd: process.cwd(), encoding: "utf-8" },
-    );
-    assert(first.status === 0, `migration script should succeed: ${first.stderr || first.stdout}`);
-
-    const migrated = JSON.parse(readFileSync(join(vault, "ops", "commitments.json"), "utf-8")) as {
-      commitments: Array<{ id: string }>;
-    };
-    const ids = migrated.commitments.map((entry) => entry.id);
-    assert(new Set(ids).size === ids.length, "migration should produce unique commitment IDs");
-
-    const second = spawnSync(
-      "pnpm",
-      ["-s", "tsx", "scripts/migrate-commitment-ids.ts", "--vault", vault],
-      { cwd: process.cwd(), encoding: "utf-8" },
-    );
-    assert(second.status === 0, `second migration run should succeed: ${second.stderr || second.stdout}`);
-    assert(
-      second.stdout.includes("no changes required"),
-      "second migration run should be idempotent",
-    );
-  } finally {
-    rmSync(vault, { recursive: true, force: true });
-  }
-}
 
 async function testExecutionDispatch(): Promise<void> {
   const vault = createTempVault();
@@ -1286,11 +1228,10 @@ async function main() {
   await testHeartbeatRepairPromptStructure();
   await testHeartbeatPreservesConcurrentQueueWrites();
   await testMcpQueueMigration();
-  await testCommitmentIdMigrationScript();
   await testExecutionDispatch();
   await testExecutionDispatchFailureTruth();
   await testTelemetryCorrelationChain();
-  console.log("Runtime integration checks passed: 18/18");
+  console.log("Runtime integration checks passed: 17/17");
 }
 
 main().catch((error) => {

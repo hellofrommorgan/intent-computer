@@ -13,3 +13,4 @@ export * from "./telemetry.js";
 export * from "./ops-config.js";
 export * from "./slug.js";
 export * from "./graph-links.js";
+export * from "./evaluation.js";

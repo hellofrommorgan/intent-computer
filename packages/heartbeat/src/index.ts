@@ -49,22 +49,36 @@ import type {
 } from "./heartbeat.js";
 import { installSchedule, uninstallSchedule, getScheduleStatus } from "./scheduler.js";
 
-export { runHeartbeat, findAlignedTasks } from "./heartbeat.js";
-export type { HeartbeatPhase, HeartbeatOptions, HeartbeatResult } from "./heartbeat.js";
+export { runHeartbeat, findAlignedTasks, recordStateTransition, recordAdvancementSignal } from "./heartbeat.js";
+export type { HeartbeatPhase, HeartbeatOptions, HeartbeatResult, StoredCommitment, CommitmentStore } from "./heartbeat.js";
+export { scoreTaskRelevance, filterAndReorderTasks } from "./commitment-filter.js";
+export type { TaskRelevanceScore, FilterOptions, FilterResult, DeferredTask } from "./commitment-filter.js";
+export { evaluateCommitmentAdvancement, buildRecentActivity } from "./commitment-evaluator.js";
+export type { RecentActivity, CommitmentEvaluationResult } from "./commitment-evaluator.js";
+export { detectDrift } from "./drift-detector.js";
+export type { DriftReport, CommitmentDrift, PriorityInversion } from "./drift-detector.js";
 export { installSchedule, uninstallSchedule, getScheduleStatus } from "./scheduler.js";
 export type { ScheduleStatus, ScheduleJobStatus } from "./scheduler.js";
 export * from "./runner.js";
-export { pollXFeeds, extractCommitmentKeywords } from "./x-feed.js";
+export { pollXFeeds, extractCommitmentKeywords, createXFeedSource } from "./x-feed.js";
 export type { XFeedOptions, XFeedSource, XFeedResult, CapturedTweet } from "./x-feed.js";
+export { runPerceptionPhase, buildPerceptionContext } from "./perception-runtime.js";
+export type { FeedSource } from "./perception-runtime.js";
+export { applyAdmissionPolicy, scoreIdentityRelevance, trackNoiseRate, DEFAULT_ADMISSION_POLICY } from "./admission-policy.js";
+export { readCursors, writeCursors, getCursor, updateCursor, pruneCursor } from "./cursor-store.js";
 export type {
   Commitment,
   CommitmentState,
   PipelineTask,
+  StateTransition,
+  AdvancementSignal,
+  DriftSnapshot,
+  OutcomePattern,
 } from "@intent-computer/architecture";
 
 // ─── Phase parsing ───────────────────────────────────────────────────────────
 
-const VALID_PHASES: HeartbeatPhase[] = ["5a", "5b", "5c", "6", "7"];
+const VALID_PHASES: HeartbeatPhase[] = ["4a", "5a", "5b", "5c", "6", "7"];
 
 function parsePhases(raw: string): HeartbeatPhase[] | undefined {
   const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);

@@ -254,3 +254,144 @@ export interface PipelineRunResult {
   completed: boolean;
   phases: PipelinePhaseResult[];
 }
+
+// ─── Commitment Engine Types (Phase 1) ──────────────────────────────────────
+
+export interface StateTransition {
+  from: CommitmentState;
+  to: CommitmentState;
+  at: ISODateTime;
+  reason: string;
+  proposedBy: "engine" | "human";
+  accepted: boolean;
+}
+
+export interface AdvancementSignal {
+  at: ISODateTime;
+  action: string;
+  relevanceScore: number; // 0-1
+  method: "direct" | "inferred";
+}
+
+export interface DriftSnapshot {
+  at: ISODateTime;
+  score: number; // 0-1
+  summary: string;
+  windowDays: number;
+}
+
+export interface OutcomePattern {
+  state: "satisfied" | "abandoned";
+  at: ISODateTime;
+  actionSequence: string[];
+  totalDays: number;
+  lessonsLearned?: string;
+}
+
+// ─── Perception Feed Types ──────────────────────────────────────────────────
+
+export interface FeedCapture {
+  id: string;
+  sourceId: string;
+  capturedAt: ISODateTime;
+  title: string;
+  content: string;
+  urls: string[];
+  metadata: Record<string, unknown>;
+  rawRelevanceScore: number; // 0-1
+}
+
+export interface PerceptionContext {
+  commitmentLabels: string[];
+  identityThemes: string[];
+  vaultTopics: string[];
+  recentThoughts: string[];
+}
+
+export interface AdmissionPolicyConfig {
+  maxSignalsPerChannel: number; // Default: 3
+  umweltBudgetLines: number; // Default: 50
+  relevanceFloor: number; // Default: 0.3
+  briefThreshold: number; // Default: 0.6
+  maxInboxWritesPerCycle: number; // Default: 10
+}
+
+export interface AdmissionResult {
+  admitted: FeedCapture[];
+  surfaced: FeedCapture[];
+  filtered: number;
+  reason: string;
+}
+
+export interface PerceptionSummary {
+  at: ISODateTime;
+  channels: ChannelSummary[];
+  health: "active" | "degraded" | "silent";
+  noiseAlerts?: NoiseAlert[];
+}
+
+export interface NoiseAlert {
+  sourceId: string;
+  filterRate: number;
+  consecutiveDays: number;
+  recommendation: string;
+}
+
+export interface NoiseTracker {
+  sources: Record<string, SourceNoiseHistory>;
+  lastUpdated: string;
+}
+
+export interface SourceNoiseHistory {
+  dailyRates: Array<{ date: string; admitted: number; total: number; rate: number }>;
+}
+
+export interface ChannelSummary {
+  sourceId: string;
+  sourceName: string;
+  polled: number;
+  admitted: number;
+  filtered: number;
+  topItems: BriefItem[];
+  summaryLine: string;
+}
+
+export interface BriefItem {
+  title: string;
+  relevanceScore: number;
+  reason: string;
+  inboxPath: string;
+}
+
+export type SourceCursor =
+  | { type: "id-set"; seenIds: string[]; maxRetained: number }
+  | { type: "token"; value: string }
+  | { type: "timestamp"; lastSeen: ISODateTime }
+  | { type: "delta"; deltaLink: string };
+
+export interface CursorStoreData {
+  cursors: Record<string, SourceCursor>;
+  lastUpdated: ISODateTime;
+}
+
+// ─── Evaluation types (Phase 1) ──────────────────────────────────────────────
+
+export interface ThoughtScore {
+  path: string;
+  title: string;
+  incomingLinks: number;
+  mapMemberships: number;
+  ageDays: number;
+  daysSinceLastLink: number;
+  impactScore: number;
+}
+
+export interface EvaluationRecord {
+  id: string;
+  evaluatedAt: ISODateTime;
+  thoughtsScored: number;
+  avgImpactScore: number;
+  topThoughts: ThoughtScore[];      // top 10 by impact
+  orphanThoughts: ThoughtScore[];   // score <= 0, age > 7 days
+  orphanRate: number;               // 0-1
+}

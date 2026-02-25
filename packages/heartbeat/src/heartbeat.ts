@@ -34,9 +34,14 @@ import type {
   PipelineQueueFile,
   PipelineTask,
   RepairContext,
+  StateTransition,
+  AdvancementSignal,
+  OutcomePattern,
+  DriftSnapshot,
 } from "@intent-computer/architecture";
 import {
   emitCommitmentEvaluated,
+  emitEvaluationRun,
   emitHeartbeatRun,
   emitRepairQueued,
   emitTaskExecuted,
@@ -50,12 +55,27 @@ import {
   withQueueLock,
   writeQueue,
   writeCommitmentsAtomic,
+  scoreAllThoughts,
+  writeEvaluationRecord,
 } from "@intent-computer/architecture";
+import type { EvaluationRecord } from "@intent-computer/architecture";
 import { runClaude, runSkillTask } from "./runner.js";
+import { createXFeedSource } from "./x-feed.js";
+import { runPerceptionPhase } from "./perception-runtime.js";
+import type { PerceptionSummary } from "@intent-computer/architecture";
+import { filterAndReorderTasks } from "./commitment-filter.js";
+import type { FilterResult, DeferredTask } from "./commitment-filter.js";
+import {
+  evaluateCommitmentAdvancement,
+  buildRecentActivity,
+} from "./commitment-evaluator.js";
+import type { CommitmentEvaluationResult } from "./commitment-evaluator.js";
+import { detectDrift } from "./drift-detector.js";
+import type { DriftReport } from "./drift-detector.js";
 
 // ─── Commitment store schema ──────────────────────────────────────────────────
 
-interface StoredCommitment {
+export interface StoredCommitment {
   id: string;
   label: string;
   state: CommitmentState;
@@ -66,12 +86,85 @@ interface StoredCommitment {
   source: string;
   lastAdvancedAt: string;
   evidence: string[];
+  // Phase 1: commitment engine extensions
+  createdAt?: string;
+  stateHistory?: StateTransition[];
+  advancementSignals?: AdvancementSignal[];
+  outcomePattern?: OutcomePattern;
+  driftSnapshots?: DriftSnapshot[];
+  desireClassRationale?: string;
 }
 
-interface CommitmentStore {
+export interface CommitmentStore {
   version: number;
   commitments: StoredCommitment[];
   lastEvaluatedAt: string;
+}
+
+// ─── Commitment state machine ────────────────────────────────────────────────
+
+const VALID_STATE_TRANSITIONS: Record<CommitmentState, CommitmentState[]> = {
+  candidate: ["active"],
+  active: ["paused", "satisfied", "abandoned"],
+  paused: ["active", "abandoned"],
+  satisfied: [],
+  abandoned: [],
+};
+
+export function recordStateTransition(
+  commitment: StoredCommitment,
+  targetState: CommitmentState,
+  reason: string,
+  proposedBy: "engine" | "human",
+): StoredCommitment {
+  const allowed = VALID_STATE_TRANSITIONS[commitment.state] ?? [];
+  if (!allowed.includes(targetState)) {
+    throw new Error(
+      `Invalid state transition: ${commitment.state} → ${targetState} (allowed: ${allowed.join(", ") || "none"})`,
+    );
+  }
+
+  const transition: StateTransition = {
+    from: commitment.state,
+    to: targetState,
+    at: new Date().toISOString(),
+    reason,
+    proposedBy,
+    accepted: true,
+  };
+
+  if (!commitment.stateHistory) {
+    commitment.stateHistory = [];
+  }
+  commitment.stateHistory.push(transition);
+  commitment.state = targetState;
+
+  return commitment;
+}
+
+export function recordAdvancementSignal(
+  commitment: StoredCommitment,
+  action: string,
+  relevanceScore: number,
+  method: "direct" | "inferred",
+): StoredCommitment {
+  const signal: AdvancementSignal = {
+    at: new Date().toISOString(),
+    action,
+    relevanceScore,
+    method,
+  };
+
+  if (!commitment.advancementSignals) {
+    commitment.advancementSignals = [];
+  }
+  commitment.advancementSignals.push(signal);
+
+  if (relevanceScore > 0.5) {
+    commitment.lastAdvancedAt = signal.at;
+  }
+
+  return commitment;
 }
 
 // ─── Queue schema ─────────────────────────────────────────────────────────────
@@ -493,13 +586,21 @@ function checkVaultConditions(
 
 // ─── Commitment evaluation ────────────────────────────────────────────────────
 
+function migrateCommitments(store: CommitmentStore): CommitmentStore {
+  for (const c of store.commitments) {
+    if (!c.stateHistory) c.stateHistory = [];
+    if (!c.advancementSignals) c.advancementSignals = [];
+  }
+  return store;
+}
+
 function loadCommitments(vaultRoot: string): CommitmentStore {
   const path = join(vaultRoot, "ops", "commitments.json");
   if (!existsSync(path)) {
     return { version: 1, commitments: [], lastEvaluatedAt: "" };
   }
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return migrateCommitments(JSON.parse(readFileSync(path, "utf-8")));
   } catch {
     return { version: 1, commitments: [], lastEvaluatedAt: "" };
   }
@@ -536,6 +637,14 @@ function evaluateCommitments(
   const results: CommitmentEvaluation[] = [];
 
   for (const c of store.commitments) {
+    // Backward compatibility: initialize stateHistory if missing
+    if (!c.stateHistory) {
+      c.stateHistory = [];
+    }
+    if (!c.advancementSignals) {
+      c.advancementSignals = [];
+    }
+
     if (c.state !== "active") continue;
 
     // Check staleness based on horizon
@@ -561,6 +670,16 @@ function evaluateCommitments(
       if (status === "done" || status === "archived") return false;
       return target.includes(labelLower) || source.includes(labelLower);
     }).length;
+
+    // Record advancement signal when aligned tasks indicate active work
+    if (alignedTasks > 0) {
+      recordAdvancementSignal(
+        c,
+        `${alignedTasks} aligned queue task(s) detected`,
+        0.3, // below 0.5 threshold — presence of tasks is weak signal, not actual progress
+        "inferred",
+      );
+    }
 
     results.push({ commitment: c, stale, alignedTasks, staleDays });
   }
@@ -606,7 +725,7 @@ export type HeartbeatTaskRunner = (
 ) => TriggerExecutionResult;
 
 /** Valid heartbeat phase identifiers for selective execution. */
-export type HeartbeatPhase = "5a" | "5b" | "5c" | "6" | "7";
+export type HeartbeatPhase = "4a" | "5a" | "5b" | "5c" | "6" | "7";
 
 export interface HeartbeatOptions {
   /** Run only these phases instead of all. Omit or pass undefined for full heartbeat. */
@@ -642,6 +761,7 @@ export interface HeartbeatResult {
   repairsQueued: number;
   repairsSkipped: number;
   thresholdActionsRun: number;
+  perceptionSummary?: PerceptionSummary;
   thinDeferredActions: number;
   constitutiveDeferredActions: number;
 }
@@ -1582,6 +1702,8 @@ interface HeartbeatSynthesisMetrics {
   thresholdActionsRun: number;
   thinDeferredActions: number;
   constitutiveDeferredActions: number;
+  perceptionSummary?: PerceptionSummary;
+  evaluationRecord?: EvaluationRecord;
 }
 
 function writeTemplateMorningBrief(
@@ -1659,6 +1781,16 @@ ${workingMemory.split("\n").slice(-30).join("\n")}
 ## Graph Topology
 ${curiosityContext}
 
+## Perception Feeds
+${metrics.perceptionSummary ? JSON.stringify(metrics.perceptionSummary, null, 2) : "No perception data this cycle."}
+
+## Thought Impact Evaluation
+${metrics.evaluationRecord ? `Thoughts scored: ${metrics.evaluationRecord.thoughtsScored}
+Average impact: ${metrics.evaluationRecord.avgImpactScore}
+Orphan rate: ${(metrics.evaluationRecord.orphanRate * 100).toFixed(1)}%
+Top 3 by impact: ${metrics.evaluationRecord.topThoughts.slice(0, 3).map((t) => `"${t.title}" (impact: ${t.impactScore}, links: ${t.incomingLinks}, maps: ${t.mapMemberships})`).join("; ")}
+Orphan thoughts: ${metrics.evaluationRecord.orphanThoughts.length}` : "No evaluation data this cycle."}
+
 ## Your Task
 Write a morning brief (300-500 words) that:
 1. Summarizes what's active and what needs attention
@@ -1667,7 +1799,9 @@ Write a morning brief (300-500 words) that:
 4. Notes any commitments that are going stale
 5. Cites concrete runtime counters (actions executed vs advisory, queue depth change, repairs)
 6. Calls out thin-desire and constitutive-friction deferrals when present
-7. Write a "## Curiosity Advisory" section (3-5 bullet points) that:
+7. If perception data is present, include a "## Perception" section summarizing what the feeds surfaced and which items were admitted to inbox
+8. If thought evaluation data is present, include a "## Thought Impact" section noting top thoughts by impact, orphan count and rate, and average impact score
+9. Write a "## Curiosity Advisory" section (3-5 bullet points) that:
    - Identifies thin maps or topic areas that could benefit from more research
    - Flags open questions from maps that have gone unanswered
    - Notes areas where confidence is mostly "felt" and could use external evidence
@@ -1821,6 +1955,45 @@ export async function runHeartbeat(
     let repairsSkipped = 0;
     let thinDeferredActions = 0;
     let constitutiveDeferredActions = 0;
+    let perceptionSummary: PerceptionSummary | undefined;
+
+    // Phase 4a: Perception — poll feed sources and admit high-signal items.
+    if (shouldRunPhase("4a")) {
+      try {
+        const perceptionStartMs = Date.now();
+        const xFeedSource = createXFeedSource(vaultRoot);
+        const feedSources = xFeedSource.enabled ? [xFeedSource] : [];
+
+        if (feedSources.length > 0) {
+          perceptionSummary = await runPerceptionPhase(vaultRoot, feedSources);
+          const perceptionDurationMs = Date.now() - perceptionStartMs;
+          console.log(`[heartbeat:4a] Perception phase completed in ${perceptionDurationMs}ms (health: ${perceptionSummary.health})`);
+
+          // Add perception findings to recommendations
+          for (const channel of perceptionSummary.channels) {
+            if (channel.admitted > 0) {
+              recommendations.push(
+                `Perception: ${channel.summaryLine}`,
+              );
+            }
+          }
+
+          // Surface noise alerts as recommendations
+          if (perceptionSummary.noiseAlerts) {
+            for (const alert of perceptionSummary.noiseAlerts) {
+              recommendations.push(
+                `Noise alert: ${alert.recommendation}`,
+              );
+            }
+          }
+        } else {
+          console.log("[heartbeat:4a] No feed sources configured; skipping perception phase");
+        }
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[heartbeat:4a] Perception phase failed (non-blocking): ${msg}`);
+      }
+    }
 
     // Phase 5a: evaluate conditions and commitments.
     if (shouldRunPhase("5a")) {
@@ -1860,13 +2033,103 @@ export async function runHeartbeat(
           );
         }
       }
+
+      // Phase 5a (continued): semantic advancement evaluation + drift detection
+      const recentActivity = buildRecentActivity(vaultRoot, 7);
+      const activeCommitments = store.commitments.filter((c) => c.state === "active");
+
+      // Evaluate each active commitment's advancement
+      const advancementEvals: CommitmentEvaluationResult[] = [];
+      for (const commitment of activeCommitments) {
+        const evalResult = evaluateCommitmentAdvancement(commitment, recentActivity);
+        advancementEvals.push(evalResult);
+
+        // Add advancement summaries to recommendations for morning brief
+        if (evalResult.status === "drifting") {
+          recommendations.push(`Drifting: ${evalResult.briefSummary}`);
+        } else if (evalResult.status === "stalled") {
+          recommendations.push(`Stalled: ${evalResult.briefSummary}`);
+        }
+
+        // Surface proposed transitions
+        if (evalResult.proposedTransition) {
+          recommendations.push(
+            `Lifecycle proposal: "${commitment.label}" → ${evalResult.proposedTransition.to} (${evalResult.proposedTransition.reason})`,
+          );
+        }
+      }
+
+      // Run drift detection across all active commitments
+      const driftReport: DriftReport = detectDrift(store.commitments, recentActivity);
+
+      // Record DriftSnapshots on commitments with high drift
+      for (const drift of driftReport.commitmentDrifts) {
+        if (drift.driftScore > 0.7) {
+          const commitment = store.commitments.find((c) => c.id === drift.commitmentId);
+          if (commitment) {
+            if (!commitment.driftSnapshots) {
+              commitment.driftSnapshots = [];
+            }
+            commitment.driftSnapshots.push({
+              at: new Date().toISOString(),
+              score: drift.driftScore,
+              summary: drift.summary,
+              windowDays: recentActivity.daysCovered,
+            });
+            recommendations.push(`Drift alert: ${drift.summary}`);
+          }
+        }
+      }
+
+      // Surface priority inversions
+      for (const inversion of driftReport.priorityInversions) {
+        recommendations.push(`Priority inversion: ${inversion.summary}`);
+      }
+
+      // Surface sprawl warning
+      if (driftReport.sprawlWarning) {
+        recommendations.push(`Commitment sprawl: ${driftReport.sprawlWarning}`);
+      }
+
+      // Overall drift summary for morning brief
+      if (driftReport.overallDriftScore > 0.5) {
+        recommendations.push(
+          `Overall drift score: ${driftReport.overallDriftScore.toFixed(2)} — activity is misaligned with commitments`,
+        );
+      }
     }
 
     // Phase 5b: trigger queue tasks (queue-first by default, with commitment boost).
     if (shouldRunPhase("5b")) {
       alignedTasks = collectAlignedTasks(vaultRoot, store, queue);
       const selectedTasks = selectQueueTasks(vaultRoot, store, queue, options);
-      const batch = triggerQueueTasks(queue, selectedTasks, store, vaultRoot, options);
+
+      // Commitment-aware filtering: if commitments exist, reorder and defer
+      // tasks based on commitment relevance. Falls back to original order
+      // when no commitments are present.
+      const activeCommitmentsForFilter = store.commitments.filter(
+        (c) => c.state === "active" || c.state === "paused",
+      );
+      let tasksToExecute: PipelineTask[];
+      let commitmentDeferred: DeferredTask[] = [];
+
+      if (activeCommitmentsForFilter.length > 0) {
+        const filterResult: FilterResult = filterAndReorderTasks(
+          selectedTasks,
+          store.commitments,
+        );
+        tasksToExecute = filterResult.prioritized;
+        commitmentDeferred = filterResult.deferred;
+
+        // Log deferred tasks
+        for (const d of commitmentDeferred) {
+          recommendations.push(`${d.reason} [${d.task.taskId}]`);
+        }
+      } else {
+        tasksToExecute = selectedTasks;
+      }
+
+      const batch = triggerQueueTasks(queue, tasksToExecute, store, vaultRoot, options);
       triggered = batch.triggered;
       executedActions += batch.executedActions;
       advisoryActions += batch.advisoryActions;
@@ -1880,7 +2143,7 @@ export async function runHeartbeat(
         recommendations.push("Heartbeat execution disabled by option; queue tasks were not run.");
       } else if (options.dryRun) {
         recommendations.push(`Heartbeat dry-run: ${triggered.length} queue task(s) selected.`);
-      } else if (triggered.length === 0) {
+      } else if (triggered.length === 0 && commitmentDeferred.length === 0) {
         recommendations.push("Heartbeat execution enabled, but no queue tasks were eligible.");
       } else {
         for (const result of triggered) {
@@ -1905,7 +2168,8 @@ export async function runHeartbeat(
       // Overnight slot processes all inbox items; daytime caps at 3 per cycle.
       const runSlot = options.runSlot ?? "manual";
       const seedLimit = runSlot === "overnight" ? Infinity : 3;
-      if (!options.dryRun) {
+      const thresholdMode = options.thresholdMode ?? "queue-only";
+      if (!options.dryRun && thresholdMode !== "queue-only") {
         const seeded = seedInboxItems(vaultRoot, queue, seedLimit);
         if (seeded.length > 0) {
           advisoryActions += seeded.length;
@@ -1920,15 +2184,14 @@ export async function runHeartbeat(
 
       const thresholdActions = evaluateThresholds(vaultRoot, thresholds);
       thresholdActionsCount = thresholdActions.length;
-      const thresholdMode = options.thresholdMode ?? "queue-only";
       if (thresholdActions.length > 2) {
         console.warn(`[heartbeat:5c] ${thresholdActions.length} threshold actions triggered this cycle — capping at 2 to prevent vault write flooding`);
         thresholdActions.splice(2);
         thresholdActionsCount = 2;
       }
       for (const action of thresholdActions) {
-        // Inbox seeding is handled by seedInboxItems() above — skip queue creation.
-        if (action.action === "auto-seed-inbox") {
+        // Inbox seeding is handled by seedInboxItems() above — skip execution if we are in execute mode.
+        if (action.action === "auto-seed-inbox" && thresholdMode !== "queue-only") {
           console.log(`[heartbeat:5c] Inbox pressure noted (${action.current}/${action.threshold}) — seeding handled above`);
           continue;
         }
@@ -2025,6 +2288,51 @@ export async function runHeartbeat(
       );
     }
 
+    // Phase 5d: Evaluation — score thoughts by graph impact.
+    let evaluationRecord: EvaluationRecord | undefined;
+    if (shouldRunPhase("5a")) {
+      try {
+        const graph = scanVaultGraph(vaultRoot);
+        const thoughtsPath = join(vaultRoot, "thoughts");
+        evaluationRecord = scoreAllThoughts(graph, thoughtsPath);
+        writeEvaluationRecord(vaultRoot, evaluationRecord);
+
+        emitEvaluationRun(vaultRoot, {
+          evaluationId: evaluationRecord.id,
+          thoughtsScored: evaluationRecord.thoughtsScored,
+          avgImpactScore: evaluationRecord.avgImpactScore,
+          orphanRate: evaluationRecord.orphanRate,
+        });
+
+        console.log(
+          `[heartbeat:5d] Evaluation: ${evaluationRecord.thoughtsScored} thoughts scored, ` +
+          `avg impact ${evaluationRecord.avgImpactScore}, ` +
+          `orphan rate ${(evaluationRecord.orphanRate * 100).toFixed(1)}%`,
+        );
+
+        // Add evaluation insights to recommendations
+        if (evaluationRecord.topThoughts.length > 0) {
+          const top3 = evaluationRecord.topThoughts.slice(0, 3);
+          recommendations.push(
+            `Top impact thoughts: ${top3.map((t) => `"${t.title}" (${t.impactScore})`).join(", ")}`,
+          );
+        }
+
+        if (evaluationRecord.orphanThoughts.length > 0) {
+          recommendations.push(
+            `${evaluationRecord.orphanThoughts.length} orphan thought(s) (${(evaluationRecord.orphanRate * 100).toFixed(1)}% orphan rate) — run /reflect to connect them`,
+          );
+        }
+
+        recommendations.push(
+          `Average thought impact: ${evaluationRecord.avgImpactScore}`,
+        );
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[heartbeat:5d] Evaluation failed (non-blocking): ${msg}`);
+      }
+    }
+
     // Phase 6: morning brief synthesis via Claude.
     if (shouldRunPhase("6")) {
       const runSlot = options.runSlot ?? "manual";
@@ -2042,6 +2350,8 @@ export async function runHeartbeat(
           thresholdActionsRun: thresholdActionsCount,
           thinDeferredActions,
           constitutiveDeferredActions,
+          perceptionSummary,
+          evaluationRecord,
         });
       } else {
         console.log("[heartbeat:6] Morning brief is fresh (<12h), skipping generation");
@@ -2091,10 +2401,10 @@ export async function runHeartbeat(
           const fp = join(cyclesDir, f);
           try {
             if (statSync(fp).mtimeMs < thirtyDaysAgo) unlinkSync(fp);
-          } catch {}
+          } catch { }
         }
       }
-    } catch {}
+    } catch { }
 
     // Prune old session stub files (keep last 30 days)
     try {
@@ -2106,10 +2416,10 @@ export async function runHeartbeat(
           const fp = join(sessionsDir, f);
           try {
             if (statSync(fp).mtimeMs < thirtyDaysAgo) unlinkSync(fp);
-          } catch {}
+          } catch { }
         }
       }
-    } catch {}
+    } catch { }
 
     const exceededConditions = conditions.filter((c) => c.exceeded).map((c) => c.key);
     const staleCommitments = evaluations.filter((e) => e.stale).map((e) => e.commitment.label);
@@ -2153,6 +2463,7 @@ export async function runHeartbeat(
       repairsQueued,
       repairsSkipped,
       thresholdActionsRun: thresholdActionsCount,
+      perceptionSummary,
       thinDeferredActions,
       constitutiveDeferredActions,
     };

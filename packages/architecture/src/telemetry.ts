@@ -20,7 +20,8 @@ export type TelemetryEventType =
   | "commitment_evaluated"
   | "skill_invoked"
   | "session_started"
-  | "session_ended";
+  | "session_ended"
+  | "evaluation_run";
 
 type TelemetryData = unknown;
 
@@ -162,6 +163,13 @@ export interface SessionEndedTelemetryData {
   lastCycleId: string | null;
 }
 
+export interface EvaluationRunTelemetryData {
+  evaluationId: string;
+  thoughtsScored: number;
+  avgImpactScore: number;
+  orphanRate: number;
+}
+
 export type IntentCycleTelemetryEvent = SessionTelemetryEventBase<
   "intent_cycle",
   IntentCycleTelemetryData
@@ -210,6 +218,10 @@ export type SessionEndedTelemetryEvent = SessionTelemetryEventBase<
   "session_ended",
   SessionEndedTelemetryData
 >;
+export type EvaluationRunTelemetryEvent = NonSessionTelemetryEventBase<
+  "evaluation_run",
+  EvaluationRunTelemetryData
+>;
 
 export type TelemetryEvent =
   | IntentCycleTelemetryEvent
@@ -223,7 +235,8 @@ export type TelemetryEvent =
   | CommitmentEvaluatedTelemetryEvent
   | SkillInvokedTelemetryEvent
   | SessionStartedTelemetryEvent
-  | SessionEndedTelemetryEvent;
+  | SessionEndedTelemetryEvent
+  | EvaluationRunTelemetryEvent;
 
 export type EmittableTelemetryEvent = Omit<TelemetryEvent, "timestamp">;
 
@@ -240,6 +253,7 @@ const ALL_EVENT_TYPES: ReadonlySet<TelemetryEventType> = new Set([
   "skill_invoked",
   "session_started",
   "session_ended",
+  "evaluation_run",
 ]);
 
 const SESSION_BOUND_TYPES: ReadonlySet<TelemetryEventType> = new Set([
@@ -366,4 +380,8 @@ export function emitSessionEnded(
   data: SessionEndedTelemetryData,
 ): void {
   emitTelemetry(vaultRoot, { type: "session_ended", sessionId, data });
+}
+
+export function emitEvaluationRun(vaultRoot: string, data: EvaluationRunTelemetryData): void {
+  emitTelemetry(vaultRoot, { type: "evaluation_run", data });
 }

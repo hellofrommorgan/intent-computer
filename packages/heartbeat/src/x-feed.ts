@@ -16,6 +16,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Rettiwt } from "rettiwt-api";
+import type { FeedCapture, PerceptionContext, SourceCursor } from "@intent-computer/architecture";
+import type { FeedSource } from "./perception-runtime.js";
+import {
+  readCursors,
+  writeCursors,
+  getCursor,
+  updateCursor,
+  pruneCursor,
+} from "./cursor-store.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,34 +68,30 @@ export interface XFeedResult {
   errors: string[];
 }
 
-// ─── State tracking (dedup across runs) ──────────────────────────────────────
+// ─── Cursor-based state tracking (dedup across runs) ─────────────────────────
 
-const STATE_FILE = "ops/runtime/x-feed-state.json";
+const X_FEED_SOURCE_ID = "x-feed";
+const MAX_RETAINED_IDS = 2000;
 
-interface FeedState {
-  lastPollAt: string;
-  seenTweetIds: string[];
+function loadSeenIds(vaultRoot: string): Set<string> {
+  const store = readCursors(vaultRoot);
+  const cursor = getCursor(store, X_FEED_SOURCE_ID);
+  if (cursor && cursor.type === "id-set") {
+    return new Set(cursor.seenIds);
+  }
+  return new Set();
 }
 
-function loadState(vaultRoot: string): FeedState {
-  const statePath = join(vaultRoot, STATE_FILE);
-  if (!existsSync(statePath)) {
-    return { lastPollAt: "", seenTweetIds: [] };
-  }
-  try {
-    return JSON.parse(readFileSync(statePath, "utf-8"));
-  } catch {
-    return { lastPollAt: "", seenTweetIds: [] };
-  }
-}
-
-function saveState(vaultRoot: string, state: FeedState): void {
-  const statePath = join(vaultRoot, STATE_FILE);
-  const dir = join(vaultRoot, "ops", "runtime");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  // Keep only last 2000 tweet IDs to prevent unbounded growth
-  state.seenTweetIds = state.seenTweetIds.slice(-2000);
-  writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+function saveSeenIds(vaultRoot: string, seenIds: string[]): void {
+  let store = readCursors(vaultRoot);
+  let cursor: SourceCursor = {
+    type: "id-set",
+    seenIds,
+    maxRetained: MAX_RETAINED_IDS,
+  };
+  cursor = pruneCursor(cursor);
+  store = updateCursor(store, X_FEED_SOURCE_ID, cursor);
+  writeCursors(vaultRoot, store);
 }
 
 // ─── API key loading ─────────────────────────────────────────────────────────
@@ -298,9 +303,9 @@ export async function pollXFeeds(
   // Initialize client
   const rettiwt = new Rettiwt({ apiKey });
 
-  // Load dedup state
-  const state = loadState(vaultRoot);
-  const seenSet = new Set(state.seenTweetIds);
+  // Load dedup state from shared cursor store
+  const seenSet = loadSeenIds(vaultRoot);
+  const newIds: string[] = [...seenSet];
 
   // Poll each source
   const sources = options.sources ?? ["lists", "bookmarks"];
@@ -313,7 +318,7 @@ export async function pollXFeeds(
         continue;
       }
       seenSet.add(tweet.id);
-      state.seenTweetIds.push(tweet.id);
+      newIds.push(tweet.id);
       result.captured.push(tweet);
     }
   }
@@ -345,12 +350,100 @@ export async function pollXFeeds(
     console.log(`[x-feed] Captured: @${tweet.authorHandle} → ${filePath}`);
   }
 
-  // Save state
-  state.lastPollAt = new Date().toISOString();
-  saveState(vaultRoot, state);
+  // Save cursor state
+  saveSeenIds(vaultRoot, newIds);
 
   console.log(`[x-feed] Poll complete: ${result.captured.length} captured, ${result.written} written, ${result.skipped} skipped`);
   return result;
+}
+
+// ─── FeedSource adapter ──────────────────────────────────────────────────────
+
+/**
+ * Creates a FeedSource adapter wrapping the existing x-feed polling logic
+ * into the standardized perception runtime interface.
+ */
+export function createXFeedSource(vaultRoot: string): FeedSource {
+  const apiKey = loadApiKey(vaultRoot);
+  const enabled = apiKey != null;
+
+  return {
+    id: "x-feed",
+    name: "X (Twitter)",
+    enabled,
+    pollIntervalMinutes: 15,
+    maxItemsPerPoll: 50,
+
+    async poll(_vaultRoot: string, context: PerceptionContext): Promise<FeedCapture[]> {
+      const keywords = extractCommitmentKeywords(context.commitmentLabels);
+
+      const result = await pollXFeeds(_vaultRoot, {
+        sources: ["lists", "bookmarks"],
+        relevanceKeywords: keywords,
+        dryRun: true, // Don't write to inbox — perception runtime handles writes
+      });
+
+      // Convert CapturedTweet[] → FeedCapture[]
+      return result.captured.map((tweet): FeedCapture => ({
+        id: tweet.id,
+        sourceId: "x-feed",
+        capturedAt: new Date().toISOString(),
+        title: `@${tweet.authorHandle}: ${tweet.text.slice(0, 100)}`,
+        content: tweet.text,
+        urls: tweet.urls,
+        metadata: {
+          author: tweet.author,
+          authorHandle: tweet.authorHandle,
+          source: tweet.source,
+          listId: tweet.listId ?? "",
+          isThread: tweet.isThread,
+          threadLength: tweet.threadLength ?? 0,
+        },
+        rawRelevanceScore: tweet.relevanceScore,
+      }));
+    },
+
+    toInboxMarkdown(capture: FeedCapture): string {
+      const meta = capture.metadata as Record<string, unknown>;
+      const authorHandle = String(meta.authorHandle ?? "unknown");
+      const author = String(meta.author ?? "unknown");
+      const source = String(meta.source ?? "feed");
+      const listId = meta.listId ? ` (list: ${String(meta.listId)})` : "";
+      const isThread = Boolean(meta.isThread);
+      const threadLength = meta.threadLength;
+
+      const lines: string[] = [
+        `# X capture: ${author} (@${authorHandle})`,
+        "",
+        `Source: https://x.com/${authorHandle}/status/${capture.id}`,
+        `Captured: ${capture.capturedAt.split("T")[0]}`,
+        `Feed source: ${source}${listId}`,
+        `Relevance score: ${capture.rawRelevanceScore.toFixed(2)}`,
+        "",
+        "---",
+        "",
+        capture.content,
+        "",
+      ];
+
+      if (capture.urls.length > 0) {
+        lines.push("## Linked Content", "");
+        for (const url of capture.urls) {
+          lines.push(`- ${url}`);
+        }
+        lines.push("");
+      }
+
+      if (isThread) {
+        lines.push(
+          `*Thread with ${threadLength || "multiple"} posts — expand for full context.*`,
+          "",
+        );
+      }
+
+      return lines.join("\n");
+    },
+  };
 }
 
 // ─── Commitment-aligned keyword extraction ──────────────────────────────────
