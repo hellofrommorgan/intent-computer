@@ -53,7 +53,7 @@ export interface HeartbeatRunTelemetryData {
   phase: "start" | "end";
   queueDepth: number;
   selectivePhases: string[] | "all";
-  runSlot?: "morning" | "evening" | "manual";
+  runSlot?: "morning" | "evening" | "overnight" | "manual";
   conditionsChecked?: number;
   startedAt?: string;
   conditionsExceeded?: string[];

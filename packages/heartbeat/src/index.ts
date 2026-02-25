@@ -158,7 +158,7 @@ function parseArgs(argv: string[]) {
       configPath = args[++i];
     } else if (args[i] === "--slot" && args[i + 1]) {
       const value = args[++i];
-      if (value === "morning" || value === "evening" || value === "manual") {
+      if (value === "morning" || value === "evening" || value === "overnight" || value === "manual") {
         slot = value;
       } else {
         console.error(`unknown --slot value: "${value}"`);
@@ -239,6 +239,10 @@ if (isDirectExecution) {
       console.log(`  evening (9:00 PM): ${status.evening.installed ? "active" : "not installed"}`);
       if (status.evening.plistPath) {
         console.log(`    plist: ${status.evening.plistPath}`);
+      }
+      console.log(`  overnight (11p-6a): ${status.overnight.installed ? "active" : "not installed"}`);
+      if (status.overnight.plistPath) {
+        console.log(`    plist: ${status.overnight.plistPath}`);
       }
       if (status.legacyArtifacts.length > 0) {
         console.log(`  legacy artifacts: ${status.legacyArtifacts.join(", ")}`);

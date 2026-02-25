@@ -22,8 +22,9 @@ import {
   mkdirSync,
   statSync,
   unlinkSync,
+  renameSync,
 } from "fs";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { execSync, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import type {
@@ -597,7 +598,7 @@ export interface TaskRunnerContext {
 export type HeartbeatTaskSelection = "queue-first" | "aligned-first";
 export type HeartbeatRepairMode = "queue-only" | "execute";
 export type HeartbeatThresholdMode = "queue-only" | "execute";
-export type HeartbeatRunSlot = "morning" | "evening" | "manual";
+export type HeartbeatRunSlot = "morning" | "evening" | "overnight" | "manual";
 
 export type HeartbeatTaskRunner = (
   task: PipelineTask,
@@ -1210,22 +1211,21 @@ function evaluateThresholds(
 ): ThresholdAction[] {
   const actions: ThresholdAction[] = [];
 
-  // Inbox pressure
+  // Inbox pressure — handled separately by seedInboxItems() in Phase 5c.
   const inboxDir = join(vaultRoot, "inbox");
   const inboxFiles = existsSync(inboxDir)
     ? readdirSync(inboxDir).filter((f) => f.endsWith(".md"))
     : [];
   const inboxCount = inboxFiles.length;
-  const inboxTargetPath = inboxFiles.length > 0 ? join(inboxDir, inboxFiles[0]) : inboxDir;
   if (inboxCount >= thresholds.inbox) {
     actions.push({
       condition: "inbox-pressure",
       threshold: thresholds.inbox,
       current: inboxCount,
-      action: "process-inbox",
+      action: "auto-seed-inbox",
       skillName: "reduce",
-      taskContext: `Process ${Math.min(3, inboxCount)} inbox items from ${inboxDir}. Extract insights as thoughts.`,
-      targetPath: inboxTargetPath,
+      taskContext: `${inboxCount} inbox items detected. Auto-seeding handled by seedInboxItems().`,
+      targetPath: inboxDir,
     });
   }
 
@@ -1278,12 +1278,108 @@ function thresholdActionPhase(skillName: string): PipelinePhase {
   return "surface";
 }
 
-function hasPendingThresholdTask(queue: PipelineQueueFile, condition: string): boolean {
+function hasPendingThresholdTask(queue: PipelineQueueFile, condition: string, sourcePath?: string): boolean {
   return queue.tasks.some((task) => {
     const status = task.status ?? "pending";
     if (status === "done" || status === "archived") return false;
-    return task.target === condition;
+    if (task.target === condition) return true;
+    if (sourcePath && task.sourcePath === sourcePath) return true;
+    return false;
   });
+}
+
+// ─── Autonomous inbox seeding ────────────────────────────────────────────────
+
+interface SeedResult {
+  file: string;
+  slug: string;
+  archivePath: string;
+  taskId: string;
+}
+
+/**
+ * Seed inbox items into the pipeline queue without Claude invocation.
+ *
+ * 1. Creates archive folder at ops/queue/archive/{date}-{slug}/
+ * 2. Moves inbox file to archive
+ * 3. Creates a surface-phase queue task pointing at the archived file
+ *
+ * Skips files that already have a pending/in-progress task in the queue.
+ */
+function seedInboxItems(
+  vaultRoot: string,
+  queue: PipelineQueueFile,
+  maxPerCycle = 3,
+): SeedResult[] {
+  const inboxDir = join(vaultRoot, "inbox");
+  if (!existsSync(inboxDir)) return [];
+
+  const inboxFiles = readdirSync(inboxDir).filter((f) => f.endsWith(".md"));
+  if (inboxFiles.length === 0) return [];
+
+  const results: SeedResult[] = [];
+  const archiveBase = join(vaultRoot, "ops", "queue", "archive");
+  const datePrefix = new Date().toISOString().slice(0, 10);
+
+  for (const file of inboxFiles.slice(0, maxPerCycle)) {
+    const filePath = join(inboxDir, file);
+    const slug = basename(file, ".md")
+      .replace(/\s+/g, "-")
+      .toLowerCase();
+
+    const archiveDir = join(archiveBase, `${datePrefix}-${slug}`);
+    const archivedPath = join(archiveDir, file);
+    const alreadyQueued = queue.tasks.some((task) => {
+      const status = task.status ?? "pending";
+      if (status === "done" || status === "archived") return false;
+      return (
+        task.sourcePath === filePath ||
+        task.sourcePath === archivedPath ||
+        task.target === `inbox-item:${slug}`
+      );
+    });
+    if (alreadyQueued) {
+      console.log(`[heartbeat:seed] Skipping ${file} — already queued`);
+      continue;
+    }
+
+    try {
+      mkdirSync(archiveDir, { recursive: true });
+    } catch (err) {
+      console.error(`[heartbeat:seed] Failed to create archive dir ${archiveDir}:`, err);
+      continue;
+    }
+
+    try {
+      renameSync(filePath, archivedPath);
+    } catch (err) {
+      console.error(`[heartbeat:seed] Failed to move ${filePath} to ${archivedPath}:`, err);
+      continue;
+    }
+
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+    const task: PipelineTask = {
+      taskId,
+      vaultId: vaultRoot,
+      target: `inbox-item:${slug}`,
+      sourcePath: archivedPath,
+      phase: "surface",
+      status: "pending",
+      executionMode: "orchestrated",
+      createdAt: now,
+      updatedAt: now,
+      attempts: 0,
+      maxAttempts: 3,
+    };
+    queue.tasks.push(task);
+    queue.lastUpdated = now;
+
+    results.push({ file, slug, archivePath: archivedPath, taskId });
+    console.log(`[heartbeat:seed] Seeded ${file} → ${archivedPath} (task ${taskId})`);
+  }
+
+  return results;
 }
 
 // ─── Curiosity advisory: graph topology analysis ─────────────────────────────
@@ -1733,7 +1829,7 @@ export async function runHeartbeat(
       for (const condition of conditions) {
         if (!condition.exceeded) continue;
         const actions: Record<string, string> = {
-          inbox: "Process inbox items: /seed then /process",
+          inbox: "Inbox items auto-seeded into pipeline queue",
           observations: "Triage observations: /rethink",
           tensions: "Resolve tensions: /rethink",
           sessions: "Mine session transcripts: /remember --mine-sessions",
@@ -1803,8 +1899,25 @@ export async function runHeartbeat(
       }
     }
 
-    // Phase 5c: threshold-triggered actions.
+    // Phase 5c: autonomous inbox seeding + threshold-triggered actions.
     if (shouldRunPhase("5c")) {
+      // Auto-seed inbox items into the pipeline queue (mechanical, no Claude).
+      // Overnight slot processes all inbox items; daytime caps at 3 per cycle.
+      const runSlot = options.runSlot ?? "manual";
+      const seedLimit = runSlot === "overnight" ? Infinity : 3;
+      if (!options.dryRun) {
+        const seeded = seedInboxItems(vaultRoot, queue, seedLimit);
+        if (seeded.length > 0) {
+          advisoryActions += seeded.length;
+          for (const item of seeded) {
+            actionsPerformed.push(`Auto-seeded inbox item: ${item.file} → ${item.archivePath}`);
+            recommendations.push(
+              `Seeded inbox item "${item.slug}" into pipeline queue (task ${item.taskId.slice(0, 8)}…)`,
+            );
+          }
+        }
+      }
+
       const thresholdActions = evaluateThresholds(vaultRoot, thresholds);
       thresholdActionsCount = thresholdActions.length;
       const thresholdMode = options.thresholdMode ?? "queue-only";
@@ -1814,6 +1927,12 @@ export async function runHeartbeat(
         thresholdActionsCount = 2;
       }
       for (const action of thresholdActions) {
+        // Inbox seeding is handled by seedInboxItems() above — skip queue creation.
+        if (action.action === "auto-seed-inbox") {
+          console.log(`[heartbeat:5c] Inbox pressure noted (${action.current}/${action.threshold}) — seeding handled above`);
+          continue;
+        }
+
         console.log(`[heartbeat:5c] Executing threshold action: ${action.action} (condition: ${action.condition} at ${action.current}/${action.threshold})`);
         if (options.dryRun) {
           recommendations.push(
@@ -1825,7 +1944,7 @@ export async function runHeartbeat(
         }
 
         if (thresholdMode === "queue-only") {
-          if (hasPendingThresholdTask(queue, action.condition)) {
+          if (hasPendingThresholdTask(queue, action.condition, action.targetPath)) {
             repairsSkipped++;
             recommendations.push(
               `Threshold action queued already: ${action.action} (${action.condition})`,
@@ -1909,8 +2028,8 @@ export async function runHeartbeat(
     // Phase 6: morning brief synthesis via Claude.
     if (shouldRunPhase("6")) {
       const runSlot = options.runSlot ?? "manual";
-      if (runSlot === "evening") {
-        console.log("[heartbeat:6] Evening slot configured; morning brief generation skipped by policy");
+      if (runSlot === "evening" || runSlot === "overnight") {
+        console.log(`[heartbeat:6] ${runSlot} slot configured; morning brief generation skipped by policy`);
       } else if (executedActions > 0 || advisoryActions > 0 || shouldGenerateMorningBrief(vaultRoot)) {
         const commitmentSummary = buildCommitmentSummary(store, evaluations);
         briefWritten = generateMorningBrief(vaultRoot, conditions, commitmentSummary, {

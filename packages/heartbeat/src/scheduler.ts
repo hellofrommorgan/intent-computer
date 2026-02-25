@@ -16,6 +16,7 @@ import { execSync } from "child_process";
 
 const LABEL_MORNING = "com.intent-computer.heartbeat.morning";
 const LABEL_EVENING = "com.intent-computer.heartbeat.evening";
+const LABEL_OVERNIGHT = "com.intent-computer.heartbeat.overnight";
 const LEGACY_LABELS = [
   "com.intent-computer.inbox-trigger",
   "com.intent-computer.session-trigger",
@@ -33,6 +34,7 @@ export interface ScheduleJobStatus {
 export interface ScheduleStatus {
   morning: ScheduleJobStatus;
   evening: ScheduleJobStatus;
+  overnight: ScheduleJobStatus;
   platform: string;
   legacyArtifacts: string[];
   healthy: boolean;
@@ -40,16 +42,50 @@ export interface ScheduleStatus {
 
 // ─── Plist generation ────────────────────────────────────────────────────────
 
+interface CalendarInterval {
+  hour: number;
+  minute: number;
+}
+
 function generatePlist(options: {
   label: string;
   programArguments: string[];
-  hour: number;
+  hour?: number;
+  intervals?: CalendarInterval[];
   stdoutLog: string;
   stderrLog: string;
 }): string {
   const argsXml = options.programArguments
     .map((arg) => `        <string>${escapeXml(arg)}</string>`)
     .join("\n");
+
+  const intervals = options.intervals ?? [{ hour: options.hour ?? 0, minute: 0 }];
+
+  let intervalXml: string;
+  if (intervals.length === 1) {
+    intervalXml = `    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>${intervals[0].hour}</integer>
+        <key>Minute</key>
+        <integer>${intervals[0].minute}</integer>
+    </dict>`;
+  } else {
+    const dictEntries = intervals
+      .map(
+        (i) => `        <dict>
+            <key>Hour</key>
+            <integer>${i.hour}</integer>
+            <key>Minute</key>
+            <integer>${i.minute}</integer>
+        </dict>`,
+      )
+      .join("\n");
+    intervalXml = `    <key>StartCalendarInterval</key>
+    <array>
+${dictEntries}
+    </array>`;
+  }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -61,13 +97,7 @@ function generatePlist(options: {
     <array>
 ${argsXml}
     </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>${options.hour}</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+${intervalXml}
     <key>StandardOutPath</key>
     <string>${escapeXml(options.stdoutLog)}</string>
     <key>StandardErrorPath</key>
@@ -203,6 +233,38 @@ export function installSchedule(vaultRoot: string, heartbeatPath: string): boole
     stderrLog: join(logDir, "heartbeat-evening.log"),
   });
 
+  // ── Overnight plist (11 PM – 5:30 AM, every 30 min, aggressive processing) ──
+
+  const overnightPlistPath = getPlistPath(LABEL_OVERNIGHT);
+
+  // Generate intervals: 23:00, 23:30, 0:00, 0:30, ..., 5:00, 5:30
+  const overnightIntervals: CalendarInterval[] = [];
+  for (let h = 23; h <= 23; h++) {
+    overnightIntervals.push({ hour: h, minute: 0 }, { hour: h, minute: 30 });
+  }
+  for (let h = 0; h <= 5; h++) {
+    overnightIntervals.push({ hour: h, minute: 0 }, { hour: h, minute: 30 });
+  }
+
+  const overnightPlist = generatePlist({
+    label: LABEL_OVERNIGHT,
+    programArguments: [
+      nodeBin,
+      heartbeatPath,
+      "--vault",
+      vaultRoot,
+      "--phases",
+      "5a,5b,5c",
+      "--slot",
+      "overnight",
+      "--max-actions",
+      "20",
+    ],
+    intervals: overnightIntervals,
+    stdoutLog: join(logDir, "heartbeat-overnight.log"),
+    stderrLog: join(logDir, "heartbeat-overnight.log"),
+  });
+
   // ── Write and load ───────────────────────────────────────────────────────
 
   let success = true;
@@ -210,6 +272,7 @@ export function installSchedule(vaultRoot: string, heartbeatPath: string): boole
   for (const { label, path, content } of [
     { label: LABEL_MORNING, path: morningPlistPath, content: morningPlist },
     { label: LABEL_EVENING, path: eveningPlistPath, content: eveningPlist },
+    { label: LABEL_OVERNIGHT, path: overnightPlistPath, content: overnightPlist },
   ]) {
     // Unload existing if present
     if (existsSync(path)) {
@@ -234,9 +297,10 @@ export function installSchedule(vaultRoot: string, heartbeatPath: string): boole
 
   if (success) {
     console.log("\nheartbeat schedule installed:");
-    console.log("  morning (6:00 AM) — full profile: 5a,5b,5c,6,7");
-    console.log("  evening (9:00 PM) — full profile: 5a,5b,5c,6,7");
-    console.log(`  logs: ${logDir}/heartbeat-{morning,evening}.log`);
+    console.log("  morning (6:00 AM)  — full profile: 5a,5b,5c,6,7");
+    console.log("  evening (9:00 PM)  — full profile: 5a,5b,5c,6,7");
+    console.log("  overnight (11p-6a) — processing: 5a,5b,5c every 30min, max 20 tasks/run");
+    console.log(`  logs: ${logDir}/heartbeat-{morning,evening,overnight}.log`);
   }
 
   return success;
@@ -254,7 +318,7 @@ export function uninstallSchedule(): boolean {
 
   let success = true;
 
-  for (const label of [LABEL_MORNING, LABEL_EVENING, ...LEGACY_LABELS]) {
+  for (const label of [LABEL_MORNING, LABEL_EVENING, LABEL_OVERNIGHT, ...LEGACY_LABELS]) {
     let plistPath: string;
     try {
       plistPath = getPlistPath(label);
@@ -309,10 +373,17 @@ export function getScheduleStatus(): ScheduleStatus {
     plistPath: "",
   };
 
+  const overnight: ScheduleJobStatus = {
+    label: LABEL_OVERNIGHT,
+    installed: false,
+    plistPath: "",
+  };
+
   if (process.platform !== "darwin") {
     return {
       morning,
       evening,
+      overnight,
       platform: process.platform,
       legacyArtifacts: [],
       healthy: false,
@@ -335,6 +406,14 @@ export function getScheduleStatus(): ScheduleStatus {
     // $HOME not set
   }
 
+  try {
+    const overnightPath = getPlistPath(LABEL_OVERNIGHT);
+    overnight.plistPath = overnightPath;
+    overnight.installed = existsSync(overnightPath) && isJobLoaded(LABEL_OVERNIGHT);
+  } catch {
+    // $HOME not set
+  }
+
   const legacyArtifacts: string[] = [];
   for (const label of LEGACY_LABELS) {
     try {
@@ -347,6 +426,6 @@ export function getScheduleStatus(): ScheduleStatus {
     }
   }
 
-  const healthy = morning.installed && evening.installed && legacyArtifacts.length === 0;
-  return { morning, evening, platform: process.platform, legacyArtifacts, healthy };
+  const healthy = morning.installed && evening.installed && overnight.installed && legacyArtifacts.length === 0;
+  return { morning, evening, overnight, platform: process.platform, legacyArtifacts, healthy };
 }
