@@ -113,6 +113,10 @@ Seven zeroth principles define the structural commitments of the intent computer
 
 Full treatment with formal anchors and diagnostics: [`docs/vision/PRINCIPLES.md`](docs/vision/PRINCIPLES.md)
 
+## Acknowledgments
+
+The knowledge architecture -- atomic thoughts, wiki-link graphs, structured processing pipelines, condition-based maintenance, and the vault-as-filesystem pattern -- is built on [Ars Contexta](https://github.com/agenticnotetaking/arscontexta). The intent computer extends that foundation with the five-layer intent loop, commitment tracking, between-session autonomy, and multi-platform hook adapters.
+
 ## License
 
 MIT
