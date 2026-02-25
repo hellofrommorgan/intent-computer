@@ -1,5 +1,7 @@
 # Architecture Opinions
 
+> **Canonical technical spec:** [methodology/architecture.md](../../methodology/architecture.md) defines the five-layer architecture, port interfaces, domain types, and the intent loop. This document covers the *why* behind each opinion -- the rationale and conviction that the spec does not repeat.
+
 Every major design choice in the intent computer is an opinion held with conviction. This document states each opinion and its rationale. No alternatives-considered. No apologies.
 
 ---

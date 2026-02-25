@@ -1,5 +1,7 @@
 # Vision
 
+> **This document is the public summary.** For the full specification, see [methodology/](../../methodology/) — particularly [index.md](../../methodology/index.md) for the comprehensive reference, [zeroth-principles.md](../../methodology/zeroth-principles.md) for the formal treatment of Z0-Z6, and [architecture.md](../../methodology/architecture.md) for the technical architecture.
+
 The intent computer is a protocol for intent realization. It is what remains when you remove everything between wanting and having that does not need to be there.
 
 It is not a chatbot, an LLM OS, an agent framework, a hypervisor, a GUI for agents, or an automation tool.
@@ -16,13 +18,17 @@ A more intentional person gets more from the system. A less intentional person g
 
 ## Zeroth Principles
 
-- **Z0: Intentionality precedes computation.** The system does nothing without a reason to act.
-- **Z1: Identity precedes capability.** Who you are determines what you can do, not the reverse.
-- **Z2: Context is the computer.** CLAUDE.md programs the agent. SKILL.md is the executable. The compiler is the language model.
-- **Z3: Relation precedes representation.** A thought without connections is a thought that will never be found. Links are first-class.
-- **Z4: Compression is the direction of intelligence.** Each evolution simplifies while expanding capability. The next step is always less, not more.
-- **Z5: Error is signal, not noise.** Failures carry information. The system learns from friction, not just success.
-- **Z6: Autonomy is temporal, not spatial.** An agent earns the right to act over time, not by occupying a privileged position in a hierarchy.
+Seven foundational commitments govern the system, forming a strict dependency chain from Z0 (intentionality) through Z6 (temporal autonomy). Each principle requires the ones below it. When something breaks, trace downward to the lowest violated principle — that is the root cause.
+
+- **Z0:** Intentionality precedes computation
+- **Z1:** Identity precedes capability
+- **Z2:** Context is the computer
+- **Z3:** Relation precedes representation
+- **Z4:** Compression is the direction of intelligence
+- **Z5:** Error is signal, not noise
+- **Z6:** Autonomy is temporal, not spatial
+
+For the full treatment — formal foundations, diagnostics, cross-domain validation, and the mathematical anchor in the Free Energy Principle — see [methodology/zeroth-principles.md](../../methodology/zeroth-principles.md).
 
 ## Priority Stack
 
@@ -37,7 +43,7 @@ If priorities conflict, the lower number wins. Always.
 
 ## Architectural Opinions
 
-These are non-negotiable unless explicitly overridden by the priority stack.
+These are non-negotiable unless explicitly overridden by the priority stack. For the full technical architecture, see [methodology/architecture.md](../../methodology/architecture.md). For the rationale behind each opinion, see [ARCHITECTURE-OPINIONS.md](ARCHITECTURE-OPINIONS.md).
 
 **Files over databases.** Markdown files, YAML frontmatter, wiki links, git. The canonical state is human-readable files under version control. Everything else is a derivative cache.
 
@@ -64,6 +70,8 @@ Each evolution simplifies while expanding capability. Skill graphs simplified pr
 If a proposed change adds complexity, it must remove more complexity than it introduces. If it cannot, it waits until it can.
 
 ## What We Will Not Build
+
+See also [NOT-THIS.md](NOT-THIS.md) for what the intent computer is frequently mistaken for, and [ACCEPTABLE.md](ACCEPTABLE.md) for the full feature evaluation framework.
 
 - **Vector databases as primary storage.** Files are canonical. Vector search is a read-only cache over them.
 - **Complex orchestration frameworks.** Skills compose via filesystem, not message buses.

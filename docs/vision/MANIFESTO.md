@@ -1,5 +1,7 @@
 # The Intent Computer: Theses
 
+> The specification behind these theses lives in [methodology/](../../methodology/). Start with [index.md](../../methodology/index.md) for the comprehensive reference, [zeroth-principles.md](../../methodology/zeroth-principles.md) for formal foundations, and [strategic-position.md](../../methodology/strategic-position.md) for the competitive analysis.
+
 **What it is. Why it exists. What it refuses to become.**
 
 ---

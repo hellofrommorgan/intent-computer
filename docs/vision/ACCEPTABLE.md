@@ -1,5 +1,7 @@
 # Acceptable
 
+> This is the feature evaluation framework for the intent computer. For the principles these evaluations are grounded in, see [methodology/zeroth-principles.md](../../methodology/zeroth-principles.md). For the architecture they must conform to, see [methodology/architecture.md](../../methodology/architecture.md). For the design tensions they must navigate, see [methodology/design-tensions.md](../../methodology/design-tensions.md).
+
 What kinds of features, contributions, and architectural changes belong in the intent computer — and what do not.
 
 Linguistic precision matters here. **Never** means non-negotiable. **Required** means mandatory for all contributions. **Preferred** means strong opinion that can be overridden with evidence. **Acceptable** means welcome without justification.

@@ -1,5 +1,7 @@
 # What the Intent Computer Is Not
 
+> For what the intent computer *is*, see [methodology/index.md](../../methodology/index.md). For its governing principles, see [methodology/zeroth-principles.md](../../methodology/zeroth-principles.md).
+
 The intent computer is frequently mistaken for things that already exist. Every comparison below is wrong in a specific, load-bearing way. These are not nitpicks about branding -- they are structural misunderstandings that, if left uncorrected, will produce the wrong system.
 
 ---
