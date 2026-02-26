@@ -5,6 +5,11 @@
   "outputDirectory": "site",
   "framework": null,
   "cleanUrls": true,
+  "redirects": [
+    { "source": "/context", "destination": "/system", "statusCode": 301 },
+    { "source": "/skills", "destination": "/system", "statusCode": 301 },
+    { "source": "/loop", "destination": "/system", "statusCode": 301 }
+  ],
   "headers": [
     {
       "source": "/(.*)",

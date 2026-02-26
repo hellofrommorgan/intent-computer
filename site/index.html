@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The Intent Computer</title>
-<meta name="description" content="Persistent context and skill graphs for openclaw.">
+<meta name="description" content="Persistent memory, composable skills, and autonomous agents for openclaw.">
 <meta property="og:title" content="The Intent Computer">
-<meta property="og:description" content="Give openclaw a persistent context graph and composable skill graph.">
+<meta property="og:description" content="Give openclaw persistent memory, composable skills, and intent capsules that run autonomously.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%96%B8</text></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -15,77 +15,62 @@
 <nav class="nav">
   <a href="/" class="nav-mark">the intent computer</a>
   <div class="nav-links">
-    <a href="/context">context graph</a>
-    <a href="/skills">skill graph</a>
-    <a href="/loop">the loop</a>
+    <a href="/system">the system</a>
+    <a href="/capsules">capsules</a>
   </div>
 </nav>
 
 <div class="page">
 
   <section class="hero">
-    <h1 class="hero-title"><span class="hero-name">The Intent Computer</span> gives <a href="https://openclaw.ai" target="_blank" rel="noopener" class="hero-link">openclaw</a> a memory that persists and skills that compose.</h1>
+    <h1 class="hero-title"><span class="hero-name">The Intent Computer</span> gives <a href="https://openclaw.ai" target="_blank" rel="noopener" class="hero-link">openclaw</a> a memory that persists, skills that compose, and agents that run themselves.</h1>
   </section>
 
   <hr>
 
   <section>
-    <p class="lede">Every agent starts from zero. It doesn't know what you decided yesterday, what you were debugging before lunch, or why you picked Postgres over SQLite. You re-explain. You repeat yourself. You lose momentum. The Intent Computer plugs into openclaw and gives it two things: a <strong>context graph</strong> that remembers everything across sessions, and a <strong>skill graph</strong> of capabilities that grow with your workflow.</p>
-  </section>
-
-  <hr>
-
-  <section class="cards">
-    <a href="/context" class="card">
-      <h2 class="card-title">Context Graph</h2>
-      <p class="card-desc">Your agent's long-term memory. It captures your decisions, your reasoning, and what you were working on &mdash; then uses all of it the next time you start a session.</p>
-      <span class="card-link">/context &rarr;</span>
-    </a>
-
-    <a href="/skills" class="card">
-      <h2 class="card-title">Skill Graph</h2>
-      <p class="card-desc">Capabilities your agent can learn and reuse. Not hardcoded tools &mdash; composable instructions that chain together and adapt to how you work.</p>
-      <span class="card-link">/skills &rarr;</span>
-    </a>
-
-    <a href="/loop" class="card">
-      <h2 class="card-title">The Intent Loop</h2>
-      <p class="card-desc">The decision engine underneath. Every turn, your agent reads your context, checks what matters, and decides what to do &mdash; before you ask.</p>
-      <span class="card-link">/loop &rarr;</span>
-    </a>
+    <p class="lede">Every agent starts from zero. It doesn't know what you decided yesterday, what you were debugging before lunch, or why you picked Postgres over SQLite. You re-explain. You repeat yourself. You lose momentum. The Intent Computer fixes this with a <strong>context graph</strong> that remembers, a <strong>skill graph</strong> that acts, and <strong>intent capsules</strong> that package everything an autonomous agent needs to run on its own.</p>
   </section>
 
   <hr>
 
   <section>
-    <h2 class="section-title">How it works</h2>
-    <div class="steps">
-      <div class="step">
-        <span class="step-num">01</span>
-        <div>
-          <h3 class="step-title">Install the plugin</h3>
-          <p class="step-desc">One line in your openclaw config. No new tools to learn. Your workflow stays the same.</p>
+    <h2 class="section-title">The stack</h2>
+
+    <div class="stack">
+      <div class="stack-layer stack-layer--intent">
+        <span class="stack-num">04</span>
+        <div class="stack-content">
+          <h3 class="stack-name">Intent</h3>
+          <p class="stack-tagline">What you want to happen.</p>
+          <p class="stack-detail">capsule.yaml &mdash; a manifest that declares the goal, the skills, and the schedule. Everything else follows from this.</p>
         </div>
       </div>
-      <div class="step">
-        <span class="step-num">02</span>
-        <div>
-          <h3 class="step-title">It remembers as you work</h3>
-          <p class="step-desc">The plugin watches what you decide, what you build, and what you learn. It writes this down automatically &mdash; as connected notes on your filesystem, versioned in git. You don't have to do anything.</p>
+
+      <div class="stack-layer stack-layer--knowledge">
+        <span class="stack-num">03</span>
+        <div class="stack-content">
+          <h3 class="stack-name">Knowledge</h3>
+          <p class="stack-tagline">What the agent knows, who it is, and how it works.</p>
+          <p class="stack-detail">SKILL.md files, identity.md, ~/Mind/ vault &mdash; methodology as natural language, identity as prose, memory as a filesystem-backed graph.</p>
         </div>
       </div>
-      <div class="step">
-        <span class="step-num">03</span>
-        <div>
-          <h3 class="step-title">It picks up new skills</h3>
-          <p class="step-desc">Skills are reusable instructions your agent follows &mdash; like "extract the key decisions from this conversation" or "find connections to what I worked on last week." They chain together and get better over time.</p>
+
+      <div class="stack-layer stack-layer--engine">
+        <span class="stack-num">02</span>
+        <div class="stack-content">
+          <h3 class="stack-name">Engine</h3>
+          <p class="stack-tagline">What makes it run.</p>
+          <p class="stack-detail">The heartbeat scheduler, Agent Browser, Claude Code or Shelley &mdash; trigger evaluation, skill execution, autonomous decision-making between sessions.</p>
         </div>
       </div>
-      <div class="step">
-        <span class="step-num">04</span>
-        <div>
-          <h3 class="step-title">Every session starts warm</h3>
-          <p class="step-desc">When you open a new session, your agent already knows what you were doing, what you care about, and what needs attention. Session 50 knows everything session 1 learned.</p>
+
+      <div class="stack-layer stack-layer--machine">
+        <span class="stack-num">01</span>
+        <div class="stack-content">
+          <h3 class="stack-name">Machine</h3>
+          <p class="stack-tagline">Where it lives.</p>
+          <p class="stack-detail">An exe.dev VM, your MacBook, a Linux server, a Docker container &mdash; persistent disk, a scheduler, and network access. The capsule doesn't care which.</p>
         </div>
       </div>
     </div>
@@ -93,8 +78,24 @@
 
   <hr>
 
+  <section class="cards">
+    <a href="/system" class="card">
+      <h2 class="card-title">The System</h2>
+      <p class="card-desc">Context graphs, skill graphs, and the intent loop &mdash; how your agent gets persistent memory, composable capabilities, and autonomous decision-making.</p>
+      <span class="card-link">/system &rarr;</span>
+    </a>
+
+    <a href="/capsules" class="card">
+      <h2 class="card-title">Capsules</h2>
+      <p class="card-desc">Portable seeds that deploy autonomous agents. A manifest, an identity, skills, and a vault &mdash; everything an agent needs to run on any substrate.</p>
+      <span class="card-link">/capsules &rarr;</span>
+    </a>
+  </section>
+
+  <hr>
+
   <section>
-    <p class="kicker">Your agent should remember what you meant, not just what you said.</p>
+    <p class="kicker">Declare the intent. The computer handles the rest.</p>
     <form class="email-form" id="notify-form">
       <input type="email" placeholder="your@email.com" aria-label="Email address" required>
       <button type="submit">notify me</button>

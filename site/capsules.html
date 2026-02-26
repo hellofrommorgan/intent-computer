@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capsules &mdash; The Intent Computer</title>
+<meta name="description" content="Portable seeds that deploy autonomous agents. A manifest, an identity, skills, and a vault — everything an agent needs.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%96%B8</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-mark">the intent computer</a>
+  <div class="nav-links">
+    <a href="/system">the system</a>
+    <a href="/capsules" class="active">capsules</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <section class="page-header">
+    <h1 class="page-title">Intent Capsules</h1>
+    <p class="page-subtitle">A capsule is a seed. It carries everything an autonomous agent needs &mdash; intent, identity, methodology, and memory structure &mdash; and grows on any compatible machine.</p>
+  </section>
+
+  <hr>
+
+  <section class="prose">
+    <h2>What is a capsule</h2>
+    <p>A capsule is a directory that defines an autonomous agent. You declare what you want the agent to do in a manifest. The intent computer gives it knowledge, an engine, and a machine to run on. One command deploys it:</p>
+
+    <div class="code-block">$ ib germinate bookkeeper</div>
+
+    <p>Four phases, modeled on seed germination:</p>
+    <ul>
+      <li><strong>Sense</strong> &mdash; detect the substrate (OS, scheduler, LLM access, available CLIs)</li>
+      <li><strong>Root</strong> &mdash; establish the vault, overlay the seed structure, init git</li>
+      <li><strong>Grow</strong> &mdash; install identity, skills, configure tools</li>
+      <li><strong>Activate</strong> &mdash; start the heartbeat, enable triggers, begin autonomous operation</li>
+    </ul>
+
+    <h2>Anatomy</h2>
+
+    <div class="code-block"><span class="cm">bookkeeper/</span>
+  capsule.yaml       <span class="cm"># the manifest &mdash; what this agent does</span>
+  identity.md        <span class="cm"># who this agent is</span>
+  skills/
+    ingest.md        <span class="cm"># on: email</span>
+    categorize.md    <span class="cm"># on: after: ingest</span>
+    report.md        <span class="cm"># on: schedule: 0 6 * * 1</span>
+    anomalies.md     <span class="cm"># on: schedule: 0 7 * * *</span>
+  vault/             <span class="cm"># seed structure for persistent memory</span>
+    clients/
+    workflows/
+    reports/</div>
+
+    <p>A capsule = intent + identity + methodology + context. The methodology IS the product.</p>
+
+    <h2>The manifest</h2>
+    <p>The thinnest layer in the stack. Just a declaration of what you want to happen:</p>
+
+    <div class="code-block"><span class="kw">seed</span>: bookkeeper
+<span class="kw">version</span>: 0.1.0
+<span class="kw">intent</span>: <span class="str">"Process invoices, categorize transactions, and generate financial reports"</span>
+
+<span class="kw">identity</span>: ./identity.md
+
+<span class="kw">skills</span>:
+  - <span class="kw">path</span>: ./skills/ingest.md
+    <span class="kw">on</span>: email
+  - <span class="kw">path</span>: ./skills/categorize.md
+    <span class="kw">on</span>: <span class="str">"after: ingest"</span>
+  - <span class="kw">path</span>: ./skills/report.md
+    <span class="kw">on</span>: <span class="str">"schedule: 0 6 * * 1"</span>
+  - <span class="kw">path</span>: ./skills/anomalies.md
+    <span class="kw">on</span>: <span class="str">"schedule: 0 7 * * *"</span>
+
+<span class="kw">vault</span>: ./vault
+
+<span class="kw">requires</span>:
+  <span class="kw">substrate</span>: [linux, darwin]
+  <span class="kw">scheduler</span>: [systemd, launchd, cron]
+  <span class="kw">features</span>: [email]
+
+<span class="kw">schedule</span>:
+  <span class="kw">heartbeat</span>: 15m
+
+<span class="kw">outcome</span>:
+  <span class="kw">metric</span>: invoices processed per week
+  <span class="kw">evidence</span>: <span class="str">"reports/weekly/*.md"</span></div>
+
+    <h2>Triggers</h2>
+    <p>Skills activate on conditions, not just schedules:</p>
+
+    <div class="triggers">
+      <div class="trigger">
+        <span class="trigger-name">email</span>
+        <span class="trigger-desc">New file arrives in inbox from email delivery</span>
+      </div>
+      <div class="trigger">
+        <span class="trigger-name">schedule</span>
+        <span class="trigger-desc">Cron expression matches &mdash; <code>0 6 * * 1</code> is Monday 6am</span>
+      </div>
+      <div class="trigger">
+        <span class="trigger-name">after</span>
+        <span class="trigger-desc">Another skill just completed &mdash; skill chaining</span>
+      </div>
+      <div class="trigger">
+        <span class="trigger-name">watch</span>
+        <span class="trigger-desc">A file matching a pattern was created or modified</span>
+      </div>
+      <div class="trigger">
+        <span class="trigger-name">manual</span>
+        <span class="trigger-desc">Only when you explicitly invoke it</span>
+      </div>
+    </div>
+
+    <h2>Reference capsules</h2>
+  </section>
+
+  <section class="capsule-grid">
+    <div class="capsule-card">
+      <h3 class="capsule-name">bookkeeper</h3>
+      <p class="capsule-intent">Process invoices, categorize transactions, generate financial reports</p>
+      <p class="capsule-skills">4 skills &mdash; email &rarr; ingest &rarr; categorize, weekly reports, daily anomaly detection</p>
+    </div>
+    <div class="capsule-card">
+      <h3 class="capsule-name">seo-auditor</h3>
+      <p class="capsule-intent">Crawl client sites, analyze SEO health, deliver actionable audit reports</p>
+      <p class="capsule-skills">4 skills &mdash; weekly crawl &rarr; analyze &rarr; report, daily issue monitoring</p>
+    </div>
+    <div class="capsule-card">
+      <h3 class="capsule-name">social-media</h3>
+      <p class="capsule-intent">Curate content ideas, draft platform-specific posts, optimize engagement</p>
+      <p class="capsule-skills">4 skills &mdash; daily curate &rarr; draft, weekly calendar, Friday engagement review</p>
+    </div>
+    <div class="capsule-card">
+      <h3 class="capsule-name">lead-gen</h3>
+      <p class="capsule-intent">Identify, qualify, and nurture leads through research-driven outreach</p>
+      <p class="capsule-skills">5 skills &mdash; prospect &rarr; qualify &rarr; enrich &rarr; outreach, weekly pipeline report</p>
+    </div>
+  </section>
+
+  <section class="prose">
+    <h2>The substrate adapts, not the capsule</h2>
+    <p>The same capsule runs on an exe.dev VM, your MacBook, a Linux server, or a Docker container. The runtime detects the substrate and adapts: systemd on Linux, launchd on macOS, cron as fallback. Gateway API on exe.dev, Claude CLI locally. The capsule author writes methodology once.</p>
+
+    <h2>Build your own</h2>
+
+    <div class="code-block">$ ib new my-capsule</div>
+
+    <p>This scaffolds a capsule directory with an empty manifest, identity template, and vault. Fill in the intent. Write the identity. Add skills as markdown files. Deploy.</p>
+    <p>A skill can be as simple as "when email arrives, extract the invoice data" or as involved as a multi-step research workflow with web scraping, analysis, and reporting. The instructions are natural language. The LLM is the runtime.</p>
+  </section>
+
+  <hr>
+
+  <a href="/" class="back">&larr; home</a>
+
+  <footer class="footer">&copy; 2026 Intent Computer</footer>
+
+</div>
+
+</body>
+</html>

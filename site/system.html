@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The System &mdash; The Intent Computer</title>
+<meta name="description" content="Context graphs, skill graphs, and the intent loop — how your agent gets persistent memory and autonomous decision-making.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%96%B8</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-mark">the intent computer</a>
+  <div class="nav-links">
+    <a href="/system" class="active">the system</a>
+    <a href="/capsules">capsules</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <section class="page-header">
+    <h1 class="page-title">The System</h1>
+    <p class="page-subtitle">Three interacting subsystems: a context graph that remembers, a skill graph that acts, and an intent loop that decides. Together they give your agent persistent memory, composable capabilities, and autonomous judgment.</p>
+  </section>
+
+  <hr>
+
+  <section class="prose">
+    <h2>Context Graph</h2>
+    <p>Every agent session starts from zero. Your agent doesn't know what you decided yesterday, why you chose Postgres over SQLite, or what you were debugging before lunch. You re-explain. You repeat yourself. You lose momentum.</p>
+    <p>The context graph captures your decisions, reasoning, and discoveries as <strong>connected notes</strong> on your filesystem. Each note is a single insight, linked to related notes, versioned in git. Your agent builds this automatically as you work.</p>
+
+    <div class="cli-window">
+      <div class="cli-titlebar">
+        <span class="cli-dot"></span><span class="cli-dot"></span><span class="cli-dot"></span>
+        <span class="cli-titlebar-text">openclaw</span>
+      </div>
+      <div class="cli-session" id="context-demo" aria-label="Animated CLI session showing context graph in action"></div>
+    </div>
+
+    <p>Every note links to related notes. When your agent reads one, it follows the connections and finds everything relevant &mdash; your debugging patterns, your architecture decisions, the bug you fixed last Tuesday.</p>
+    <p>You don't organize any of this. The plugin processes what it learns through a four-phase pipeline:</p>
+    <ul>
+      <li><strong>Surface</strong> &mdash; extract insights from your conversations, code, and decisions</li>
+      <li><strong>Reflect</strong> &mdash; find connections to what you already know</li>
+      <li><strong>Revisit</strong> &mdash; update older notes when new information changes how they read</li>
+      <li><strong>Verify</strong> &mdash; check that everything is well-written and properly connected</li>
+    </ul>
+    <p>Everything lives on your machine &mdash; markdown files and JSON on your filesystem, versioned in git. No database. No cloud dependency. <code>git log</code> is your audit trail.</p>
+
+    <h2>Skill Graph</h2>
+    <p>A skill is a set of instructions your agent follows when you ask for it. You type a command, and your agent knows exactly what to do. The LLM <em>is</em> the runtime &mdash; you don't write code for a new capability, you write instructions.</p>
+
+    <div class="cli-window">
+      <div class="cli-titlebar">
+        <span class="cli-dot"></span><span class="cli-dot"></span><span class="cli-dot"></span>
+        <span class="cli-titlebar-text">openclaw</span>
+      </div>
+      <div class="cli-session" id="skill-demo" aria-label="Animated CLI session showing skills in action"></div>
+    </div>
+
+    <p><strong>Built-in skills</strong> ship in two categories:</p>
+    <p><strong>Knowledge processing</strong> &mdash; <code>/reduce</code>, <code>/reflect</code>, <code>/reweave</code>, <code>/verify</code>, <code>/pipeline</code>, <code>/learn</code>, <code>/seed</code></p>
+    <p><strong>System management</strong> &mdash; <code>/next</code>, <code>/stats</code>, <code>/graph</code>, <code>/remember</code>, <code>/rethink</code>, <code>/tasks</code>, <code>/health</code></p>
+
+    <p>Skills chain together into workflows. <code>/pipeline</code> chains <code>/reduce</code> &rarr; <code>/reflect</code> &rarr; <code>/verify</code> in sequence. <code>/learn</code> chains web search &rarr; <code>/seed</code> &rarr; <code>/pipeline</code>. You control how autonomous this is:</p>
+    <ul>
+      <li><strong>Manual</strong> &mdash; skills suggest the next step, you decide when</li>
+      <li><strong>Suggested</strong> &mdash; skills suggest + add to the task queue</li>
+      <li><strong>Automatic</strong> &mdash; one skill finishes, the next one starts</li>
+    </ul>
+
+    <h2>The Intent Loop</h2>
+    <p>The decision engine underneath. Every session start and every context shift, your agent runs five layers:</p>
+
+    <div class="diagram">
+      <div class="diagram-layer">
+        <span class="diagram-label">Perception</span>
+        <span class="diagram-desc">What's happening? Read the state of your knowledge. Spot problems: unprocessed inbox items, disconnected notes, stale commitments.</span>
+      </div>
+      <div class="diagram-arrow">&darr;</div>
+      <div class="diagram-layer">
+        <span class="diagram-label">Identity</span>
+        <span class="diagram-desc">Who am I and what do I care about? Load your agent's goals, working memory, and sense of what matters.</span>
+      </div>
+      <div class="diagram-arrow">&darr;</div>
+      <div class="diagram-layer">
+        <span class="diagram-label">Commitment</span>
+        <span class="diagram-desc">Which problems matter? Compare what's wrong against what you care about. Some things need attention now; some can wait.</span>
+      </div>
+      <div class="diagram-arrow">&darr;</div>
+      <div class="diagram-layer">
+        <span class="diagram-label">Memory</span>
+        <span class="diagram-desc">What do I already know about this? Load the relevant parts of your context graph &mdash; not everything, just what's needed.</span>
+      </div>
+      <div class="diagram-arrow">&darr;</div>
+      <div class="diagram-layer">
+        <span class="diagram-label">Execution</span>
+        <span class="diagram-desc">What should I do? Propose actions, check permissions, execute or suggest. Record what happened.</span>
+      </div>
+    </div>
+
+    <h2>The Heartbeat</h2>
+    <p>Between sessions, a background scheduler runs on a cycle. It checks your commitments, picks up queued tasks that align with your goals, detects stale work, and writes summaries. Your agent keeps tending the garden even when you're not looking.</p>
+
+    <div class="code-block"><span class="kw">interface</span> <span class="fn">IntentComputerLayers</span> {
+  <span class="fn">perception</span>:  <span class="fn">PerceptionPort</span>;    <span class="cm">// what's happening?</span>
+  <span class="fn">identity</span>:    <span class="fn">IdentityPort</span>;      <span class="cm">// who am I?</span>
+  <span class="fn">commitment</span>:  <span class="fn">CommitmentPort</span>;    <span class="cm">// what matters?</span>
+  <span class="fn">memory</span>:      <span class="fn">MemoryPort</span>;        <span class="cm">// what do I know?</span>
+  <span class="fn">execution</span>:   <span class="fn">ExecutionPort</span>;     <span class="cm">// what should I do?</span>
+}</div>
+
+    <p>Five layers. Each one is a clean interface with a swappable implementation. Today they read your local filesystem. Tomorrow they could read a cloud API. The loop stays the same.</p>
+  </section>
+
+  <hr>
+
+  <a href="/" class="back">&larr; home</a>
+
+  <footer class="footer">&copy; 2026 Intent Computer</footer>
+
+</div>
+
+<script>
+(function() {
+  var contextEl = document.getElementById('context-demo');
+  var contextSequences = [
+    [
+      { type: 'prompt', text: '> ', cmd: 'what do I know about the auth module?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'searching context graph...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found 4 connected notes:', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "the retry logic fires before token propagation completes"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "auth module uses stale refresh tokens on cold start"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "we chose JWT over session tokens for stateless scaling"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "API retry strategy needs exponential backoff"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Connected to: debugging patterns, API design, session 34', delay: 500 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: 'why did we pick Postgres over SQLite?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'searching context graph...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found in session 12 (Feb 8):', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "SQLite doesn\'t handle concurrent writes from the worker pool"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "Postgres connection pooling solves the write contention"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Also connected:', delay: 300 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "the worker pool needs 4+ concurrent writers at peak"', delay: 400 },
+      { type: 'line', cls: 'cli-muted', text: 'Decision recorded in: architecture decisions, database', delay: 500 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: 'what was I working on yesterday?', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'loading working memory...', delay: 600 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Session 47 (yesterday, 3h 12m):', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 Fixed the token refresh race condition', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 Started refactoring the retry middleware', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 Left off: retry tests are failing on timeout edge case', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Suggested: pick up the retry timeout tests from yesterday', delay: 500 },
+    ],
+  ];
+  var contextCurrent = 0;
+
+  function runDemo(el, sequences, currentRef) {
+    function run(seq) {
+      el.innerHTML = '';
+      var totalDelay = 0;
+      seq.forEach(function(step) {
+        totalDelay += step.delay;
+        var d = totalDelay;
+        setTimeout(function() {
+          var line = document.createElement('div');
+          line.className = 'cli-line' + (step.cls ? ' ' + step.cls : '');
+          if (step.type === 'prompt') {
+            var prompt = document.createElement('span');
+            prompt.className = 'cli-prompt';
+            prompt.textContent = step.text;
+            line.appendChild(prompt);
+            var cmd = document.createElement('span');
+            cmd.className = 'cli-cmd';
+            cmd.textContent = step.cmd;
+            line.appendChild(cmd);
+          } else {
+            line.textContent = step.text;
+          }
+          el.appendChild(line);
+          el.scrollTop = el.scrollHeight;
+        }, d);
+      });
+      totalDelay += 3500;
+      setTimeout(function() {
+        currentRef.i = (currentRef.i + 1) % sequences.length;
+        run(sequences[currentRef.i]);
+      }, totalDelay);
+    }
+    run(sequences[currentRef.i]);
+  }
+
+  var skillEl = document.getElementById('skill-demo');
+  var skillSequences = [
+    [
+      { type: 'prompt', text: '> ', cmd: '/reflect', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'scanning for connections...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found 3 connections to "retry logic fires before token propagation":', delay: 500 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 linked to "auth module uses stale refresh tokens"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 linked to "race conditions in the token refresh flow"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 linked to "API retry strategy needs backoff"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Updated auth module map. 3 links added.', delay: 600 },
+      { type: 'line', cls: 'cli-result', text: 'Next: /verify auth module', delay: 400 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: '/learn how do rate limiters work', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'researching...', delay: 1200 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Found 4 sources. Extracting insights:', delay: 500 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "token bucket algorithms trade burst capacity for simplicity"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "sliding window counters avoid the boundary problem"', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  \u2192 "rate limiting at the edge vs application layer is a deployment decision"', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: '3 notes created. Queued for connection-finding.', delay: 600 },
+      { type: 'line', cls: 'cli-result', text: 'Next: /reflect rate limiting', delay: 400 },
+    ],
+    [
+      { type: 'prompt', text: '> ', cmd: '/next', delay: 600 },
+      { type: 'line', text: '', delay: 300 },
+      { type: 'line', cls: 'cli-muted', text: 'checking goals, queue, inbox...', delay: 800 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-result', text: 'Recommendation:', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  Run /reflect on the 6 notes from yesterday\'s session.', delay: 400 },
+      { type: 'line', cls: 'cli-highlight', text: '  They\'re sitting in your graph with no connections yet.', delay: 400 },
+      { type: 'line', text: '', delay: 200 },
+      { type: 'line', cls: 'cli-muted', text: 'Why: your "API redesign" goal has 6 unconnected notes.', delay: 500 },
+      { type: 'line', cls: 'cli-muted', text: '      connecting them will surface patterns you\'re missing.', delay: 400 },
+    ],
+  ];
+
+  runDemo(contextEl, contextSequences, { i: 0 });
+  runDemo(skillEl, skillSequences, { i: 0 });
+})();
+</script>
+
+</body>
+</html>
