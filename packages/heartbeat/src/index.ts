@@ -66,6 +66,25 @@ export { runPerceptionPhase, buildPerceptionContext } from "./perception-runtime
 export type { FeedSource } from "./perception-runtime.js";
 export { applyAdmissionPolicy, scoreIdentityRelevance, trackNoiseRate, DEFAULT_ADMISSION_POLICY } from "./admission-policy.js";
 export { readCursors, writeCursors, getCursor, updateCursor, pruneCursor } from "./cursor-store.js";
+export {
+  evaluateTriggers,
+  recordAndChain,
+  loadCapsuleManifest,
+  loadTriggerState,
+  saveTriggerState,
+  matchesCron,
+  parseTrigger,
+} from "./capsule-trigger.js";
+export type {
+  CapsuleSkill,
+  CapsuleManifest,
+  DueSkill,
+  TriggerState,
+  ParsedTrigger,
+  TriggerKind,
+} from "./capsule-trigger.js";
+export { runCapsuleSkills } from "./capsule-runner.js";
+export type { CapsuleExecutionResult, CapsuleRunResult } from "./capsule-runner.js";
 export type {
   Commitment,
   CommitmentState,

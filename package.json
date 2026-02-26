@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r typecheck",
     "sync": "node scripts/sync-skills.js",
     "test": "pnpm run test:architecture && pnpm run test:regressions && pnpm run test:runtime && pnpm run test:fork",
+    "test:vitest": "vitest run",
     "test:architecture": "npx tsx scripts/test-architecture.ts",
     "test:fork": "npx tsx scripts/test-fork.ts",
     "test:runtime": "npx tsx scripts/test-runtime.ts",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.18"
   }
 }

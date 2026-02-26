@@ -11,3 +11,4 @@ export { LocalCommitmentAdapter } from "./local-commitment.js";
 export { LocalMemoryAdapter } from "./local-memory.js";
 export { LocalExecutionAdapter } from "./local-execution.js";
 export { LocalPipelineAdapter } from "./local-pipeline.js";
+export { measureDesiredState } from "./desired-state.js";

@@ -21,17 +21,28 @@ import type {
 } from "@intent-computer/architecture";
 import {
   countUnprocessedMineableSessions,
+  loadDesiredState,
   loadMaintenanceThresholds,
   scanVaultGraph,
 } from "@intent-computer/architecture";
+import { measureDesiredState } from "./desired-state.js";
+import { measureMetabolicRate } from "./metabolic.js";
+import { runTriggerBattery, recordTriggerRun } from "./triggers.js";
 
 const MAX_SIGNALS_PER_CHANNEL = 3;
 
+export interface LocalPerceptionOptions {
+  /** Whether to persist trigger results to history file. Default: true. */
+  recordTriggerHistory?: boolean;
+}
+
 export class LocalPerceptionAdapter implements PerceptionPort {
   private readonly vaultRoot: string;
+  private readonly options: LocalPerceptionOptions;
 
-  constructor(vaultRoot: string) {
+  constructor(vaultRoot: string, options: LocalPerceptionOptions = {}) {
     this.vaultRoot = vaultRoot;
+    this.options = { recordTriggerHistory: true, ...options };
   }
 
   async capture(input: PerceptionInput): Promise<PerceptionSnapshot> {
@@ -280,6 +291,158 @@ export class LocalPerceptionAdapter implements PerceptionPort {
           metadata: { poorDescriptions },
         });
       }
+    }
+
+    // ─── Quality triggers ──────────────────────────────────────────────
+    try {
+      const triggerReport = await runTriggerBattery(this.vaultRoot);
+
+      signals.push({
+        id: randomUUID(),
+        observedAt: now,
+        channel: "vault:triggers",
+        summary: `Trigger battery: ${triggerReport.summary.passed}/${triggerReport.summary.total} passed (${Math.round(triggerReport.passRate * 100)}%)`,
+        confidence: "high",
+        metadata: {
+          passRate: triggerReport.passRate,
+          total: triggerReport.summary.total,
+          passed: triggerReport.summary.passed,
+          warned: triggerReport.summary.warned,
+          failed: triggerReport.summary.failed,
+          regressionCount: triggerReport.regressions.length,
+        },
+      });
+
+      if (triggerReport.passRate < 0.8) {
+        gaps.push({
+          id: randomUUID(),
+          intentId: input.intent.id,
+          label: "quality-triggers",
+          gapClass: "incidental",
+          evidence: [
+            `Trigger pass rate ${Math.round(triggerReport.passRate * 100)}% is below 80% threshold`,
+            `${triggerReport.summary.failed} failed, ${triggerReport.summary.warned} warned`,
+          ],
+          confidence: "high",
+        });
+      }
+
+      if (triggerReport.regressions.length > 0) {
+        gaps.push({
+          id: randomUUID(),
+          intentId: input.intent.id,
+          label: "quality-regression",
+          gapClass: "constitutive",
+          evidence: triggerReport.regressions.map(
+            (r) => `${r.triggerId}: ${r.message} (passed ${r.lastPassed}, failed ${r.firstFailed})`,
+          ),
+          confidence: "high",
+        });
+      }
+
+      if (this.options.recordTriggerHistory) {
+        await recordTriggerRun(this.vaultRoot, triggerReport);
+      }
+    } catch (err) {
+      console.error("[perception] trigger battery failed:", err);
+    }
+
+    // ─── Metabolic rate ─────────────────────────────────────────────────
+    try {
+      const metabolicReport = await measureMetabolicRate(this.vaultRoot);
+      signals.push({
+        id: randomUUID(),
+        observedAt: now,
+        channel: "vault:metabolic",
+        summary: metabolicReport.systemHealthy
+          ? "Vault metabolic rate healthy across all spaces"
+          : `Metabolic anomalies detected: ${metabolicReport.anomalies.join(", ")}`,
+        confidence: "high",
+        metadata: {
+          systemHealthy: metabolicReport.systemHealthy,
+          anomalyCount: metabolicReport.anomalies.length,
+        },
+      });
+
+      const anomalyGapMap: Record<string, { domain: string; gapClass: "constitutive" | "incidental"; description: string }> = {
+        "identity-churn": {
+          domain: "metabolic-identity",
+          gapClass: "constitutive",
+          description: "self/ is changing too frequently — possible identity churn",
+        },
+        "pipeline-stall": {
+          domain: "metabolic-pipeline",
+          gapClass: "incidental",
+          description: "thoughts/ is not growing — pipeline may be stalled",
+        },
+        "system-disuse": {
+          domain: "metabolic-disuse",
+          gapClass: "incidental",
+          description: "No vault activity in the past week — system may be unused",
+        },
+        "ops-silence": {
+          domain: "metabolic-ops",
+          gapClass: "incidental",
+          description: "ops/ has had no changes this week — operational silence",
+        },
+      };
+
+      for (const anomaly of metabolicReport.anomalies) {
+        const mapping = anomalyGapMap[anomaly];
+        if (mapping) {
+          gaps.push({
+            id: randomUUID(),
+            intentId: input.intent.id,
+            label: mapping.domain,
+            gapClass: mapping.gapClass,
+            evidence: [mapping.description],
+            confidence: "medium",
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[perception] metabolic rate measurement failed:", err);
+    }
+
+    // ─── Desired-state gap report ──────────────────────────────────────
+    try {
+      const desired = loadDesiredState(this.vaultRoot);
+      const dsReport = measureDesiredState(this.vaultRoot, desired);
+
+      signals.push({
+        id: randomUUID(),
+        observedAt: now,
+        channel: "vault:desired-state",
+        summary: `Desired state: ${Math.round(dsReport.overallScore * 100)}% of targets met (${dsReport.metrics.filter(m => m.met).length}/${dsReport.metrics.length})`,
+        confidence: "high",
+        metadata: {
+          overallScore: dsReport.overallScore,
+          metricsMet: dsReport.metrics.filter(m => m.met).length,
+          metricsTotal: dsReport.metrics.length,
+        },
+      });
+
+      // Emit a single summary gap for the worst offender, not one per metric
+      const unmetMetrics = dsReport.metrics.filter(m => !m.met);
+      if (unmetMetrics.length > 0 && dsReport.overallScore < 0.8) {
+        const worstMetric = unmetMetrics.reduce((worst, m) =>
+          Math.abs(m.delta) > Math.abs(worst.delta) ? m : worst,
+        );
+        const isStructural = worstMetric.name === "schema-compliance" || worstMetric.name === "connection-density";
+        gaps.push({
+          id: randomUUID(),
+          intentId: input.intent.id,
+          label: `desired:${worstMetric.name}`,
+          gapClass: isStructural ? "constitutive" : "incidental",
+          evidence: [
+            `Desired state ${Math.round(dsReport.overallScore * 100)}% met — worst: ${worstMetric.name} (actual ${worstMetric.actual.toFixed(2)} vs target ${worstMetric.target.toFixed(2)})`,
+            ...unmetMetrics.slice(0, 3).map(m => `${m.name}: ${m.actual.toFixed(2)} vs ${m.target.toFixed(2)}`),
+          ],
+          confidence: "medium",
+        });
+      }
+    } catch (err) {
+      console.error("[perception] desired-state measurement failed:", err);
     }
 
     signals.push(...this.capChannelSignals("vault:maintenance", maintenanceSignals, now));

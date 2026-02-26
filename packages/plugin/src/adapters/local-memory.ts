@@ -12,8 +12,6 @@
 
 import { appendFileSync, readFileSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import { homedir } from "os";
-import { execFileSync } from "child_process";
 import { randomUUID } from "crypto";
 import type {
   MemoryPort,
@@ -25,107 +23,10 @@ import type {
 } from "@intent-computer/architecture";
 import {
   parseFrontmatter,
+  qmdVectorSearch,
+  isQmdAvailable,
 } from "@intent-computer/architecture";
-
-// ─── qmd helpers (inline to avoid cross-package dependency) ──────────────────
-
-interface QmdResult {
-  path: string;
-  score: number;
-}
-
-function findQmdBinary(): string | null {
-  const envPath = process.env["QMD_PATH"];
-  if (envPath) {
-    try {
-      if (existsSync(envPath)) return envPath;
-    } catch { /* ignore */ }
-  }
-
-  const candidates = [
-    join(homedir(), ".bun", "bin", "qmd"),
-    join(homedir(), ".local", "bin", "qmd"),
-    "/usr/local/bin/qmd",
-    "/opt/homebrew/bin/qmd",
-  ];
-  for (const c of candidates) {
-    try {
-      if (existsSync(c)) return c;
-    } catch { /* ignore */ }
-  }
-
-  try {
-    const result = execFileSync("which", ["qmd"], {
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: "pipe",
-    }).trim();
-    if (result && existsSync(result)) return result;
-  } catch { /* ignore */ }
-
-  return null;
-}
-
-/**
- * Run qmd vsearch and return result paths.
- * Returns null if qmd is unavailable or fails.
- */
-function qmdVectorSearchPaths(
-  query: string,
-  vaultRoot: string,
-  limit: number,
-): QmdResult[] | null {
-  const bin = findQmdBinary();
-  if (!bin) return null;
-
-  const args = [
-    "vsearch",
-    query,
-    "--json",
-    "-n",
-    String(limit),
-    "--collection",
-    "thoughts",
-  ];
-
-  let raw: string;
-  try {
-    raw = execFileSync(bin, args, {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: "pipe",
-      cwd: vaultRoot,
-    });
-  } catch {
-    return null;
-  }
-
-  const jsonStart = raw.indexOf("[");
-  if (jsonStart === -1) return null;
-
-  let parsed: Array<{ file?: string; score?: number }>;
-  try {
-    parsed = JSON.parse(raw.slice(jsonStart));
-  } catch {
-    return null;
-  }
-
-  if (!Array.isArray(parsed)) return null;
-
-  const QMD_SCHEME = "qmd://";
-  return parsed
-    .filter((r) => typeof r.file === "string")
-    .map((r) => {
-      const file = r.file as string;
-      const rel = file.startsWith(QMD_SCHEME)
-        ? file.slice(QMD_SCHEME.length)
-        : file;
-      return {
-        path: join(vaultRoot, rel),
-        score: typeof r.score === "number" ? r.score : 0,
-      };
-    });
-}
+import type { QmdSearchResult } from "@intent-computer/architecture";
 
 // ─── Adapter ──────────────────────────────────────────────────────────────────
 
@@ -207,12 +108,18 @@ export class LocalMemoryAdapter implements MemoryPort {
     const qmdPaths = new Set<string>();
     let qmdSucceeded = false;
 
-    for (const label of commitmentLabels) {
-      const results = qmdVectorSearchPaths(label, this.vaultRoot, 20);
-      if (results !== null) {
-        qmdSucceeded = true;
-        for (const r of results) {
-          qmdPaths.add(r.path);
+    if (isQmdAvailable()) {
+      for (const label of commitmentLabels) {
+        const results = qmdVectorSearch(label, {
+          limit: 20,
+          collection: "thoughts",
+          vaultRoot: this.vaultRoot,
+        });
+        if (results.length > 0) {
+          qmdSucceeded = true;
+          for (const r of results) {
+            qmdPaths.add(r.path);
+          }
         }
       }
     }

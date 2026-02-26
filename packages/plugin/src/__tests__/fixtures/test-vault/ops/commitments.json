@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "commitments": [
+    {
+      "id": "goal-build-test-infrastructure",
+      "label": "Build test infrastructure",
+      "state": "active",
+      "priority": 1,
+      "horizon": "session",
+      "desireClass": "unknown",
+      "frictionClass": "unknown",
+      "source": "goals.md",
+      "lastAdvancedAt": "2026-02-26T03:41:57.030Z",
+      "evidence": []
+    },
+    {
+      "id": "goal-improve-vault-health",
+      "label": "Improve vault health",
+      "state": "active",
+      "priority": 2,
+      "horizon": "week",
+      "desireClass": "unknown",
+      "frictionClass": "unknown",
+      "source": "goals.md",
+      "lastAdvancedAt": "2026-02-26T03:41:57.030Z",
+      "evidence": []
+    }
+  ],
+  "lastEvaluatedAt": "2026-02-26T04:39:52.570Z"
+}

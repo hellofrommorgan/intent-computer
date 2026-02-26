@@ -22,6 +22,8 @@ export type ActionKey =
   | "mine_sessions"
   | "advance_commitment"
   | "seed_knowledge"
+  | "fix_triggers"
+  | "fix_regressions"
   | "custom";
 export type PipelinePhase = "surface" | "reflect" | "revisit" | "verify";
 export type PipelineTaskStatus =
@@ -394,4 +396,89 @@ export interface EvaluationRecord {
   topThoughts: ThoughtScore[];      // top 10 by impact
   orphanThoughts: ThoughtScore[];   // score <= 0, age > 7 days
   orphanRate: number;               // 0-1
+}
+
+// ─── Quality Triggers ──────────────────────────────────────────────────────
+
+export type TriggerScope = "unit" | "integration" | "regression";
+export type TriggerSeverity = "pass" | "warn" | "fail";
+
+export interface TriggerResult {
+  id: string;
+  scope: TriggerScope;
+  name: string;
+  severity: TriggerSeverity;
+  message: string;
+  /** File path for unit triggers, undefined for integration */
+  target?: string;
+}
+
+export interface TriggerTrend {
+  triggerId: string;
+  passRates: number[]; // last N runs, most recent last
+  direction: "improving" | "stable" | "degrading";
+}
+
+export interface TriggerRegression {
+  triggerId: string;
+  target?: string;
+  firstFailed: string; // ISO date
+  lastPassed: string;  // ISO date
+  message: string;
+}
+
+export interface TriggerReport {
+  timestamp: string;
+  results: TriggerResult[];
+  passRate: number; // 0-1
+  trends: TriggerTrend[];
+  regressions: TriggerRegression[];
+  summary: {
+    total: number;
+    passed: number;
+    warned: number;
+    failed: number;
+  };
+}
+
+// ─── Metabolic Rate ──────────────────────────────────────────────────────────
+
+export type VaultSpace = "self" | "thoughts" | "ops";
+export type MetabolicAnomaly = "identity-churn" | "pipeline-stall" | "system-disuse" | "ops-silence";
+
+export interface SpaceMetabolism {
+  space: VaultSpace;
+  /** Files changed in last 7 days */
+  changesWeek: number;
+  /** Files changed in last 30 days */
+  changesMonth: number;
+  /** Whether current rate is within healthy range */
+  healthy: boolean;
+  /** If unhealthy, why */
+  anomaly?: MetabolicAnomaly;
+}
+
+export interface MetabolicReport {
+  timestamp: string;
+  spaces: SpaceMetabolism[];
+  anomalies: MetabolicAnomaly[];
+  /** Overall: all spaces healthy */
+  systemHealthy: boolean;
+}
+
+// ─── Desired State Gap Report ────────────────────────────────────────────────
+
+export interface DesiredStateMetric {
+  name: string;
+  actual: number;
+  target: number;
+  /** How far off: (actual - target) / target, negative means below target */
+  delta: number;
+  met: boolean;
+}
+
+export interface DesiredStateReport {
+  timestamp: string;
+  metrics: DesiredStateMetric[];
+  overallScore: number; // 0-1, fraction of metrics met
 }

@@ -45,9 +45,13 @@ import {
   withQueueLock,
   writeQueue,
 } from "@intent-computer/architecture";
-import { qmdSearch, qmdDeepSearch, isQmdAvailable } from "./qmd-bridge.js";
-import { traverseFromSeeds } from "./graph-traversal.js";
-import type { TraversalResult } from "./graph-traversal.js";
+import {
+  qmdSearch,
+  qmdDeepSearch,
+  isQmdAvailable,
+  traverseFromSeeds,
+} from "@intent-computer/architecture";
+import type { TraversalResult } from "@intent-computer/architecture";
 
 // ─── YAML frontmatter helpers ────────────────────────────────────────────────
 

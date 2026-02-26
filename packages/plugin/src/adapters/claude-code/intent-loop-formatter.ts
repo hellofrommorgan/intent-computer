@@ -46,6 +46,9 @@ interface CategorizedSignals {
   sessions: number;
   schemaIssues: string[];
   linkIssues: string[];
+  triggers?: { passRate: number; failed: number; regressions: number };
+  metabolic?: { healthy: boolean; anomalies: string };
+  desiredState?: { score: number; metCount: number; total: number };
   other: PerceptionSignal[];
 }
 
@@ -96,6 +99,23 @@ function categorizeSignals(signals: PerceptionSignal[]): CategorizedSignals {
       } else {
         result.other.push(signal);
       }
+    } else if (signal.channel === "vault:triggers") {
+      result.triggers = {
+        passRate: typeof signal.metadata?.passRate === "number" ? signal.metadata.passRate : 1,
+        failed: typeof signal.metadata?.failed === "number" ? signal.metadata.failed : 0,
+        regressions: typeof signal.metadata?.regressionCount === "number" ? signal.metadata.regressionCount : 0,
+      };
+    } else if (signal.channel === "vault:metabolic") {
+      result.metabolic = {
+        healthy: signal.metadata?.systemHealthy === true,
+        anomalies: signal.summary,
+      };
+    } else if (signal.channel === "vault:desired-state") {
+      result.desiredState = {
+        score: typeof signal.metadata?.overallScore === "number" ? signal.metadata.overallScore : 1,
+        metCount: typeof signal.metadata?.metricsMet === "number" ? signal.metadata.metricsMet : 0,
+        total: typeof signal.metadata?.metricsTotal === "number" ? signal.metadata.metricsTotal : 0,
+      };
     } else if (signal.channel !== "vault:structure") {
       // Skip vault:structure — it's mostly informational and verbose
       result.other.push(signal);
@@ -192,6 +212,21 @@ function renderSignalsSection(signals: PerceptionSignal[], gaps: DetectedGap[]):
   }
   for (const issue of cat.linkIssues) {
     lines.push(`- Links: ${issue}`);
+  }
+  // Tier 2 instrumentation — only surfaces when something needs attention
+  if (cat.triggers && cat.triggers.passRate < 1) {
+    const pct = Math.round(cat.triggers.passRate * 100);
+    const regNote = cat.triggers.regressions > 0
+      ? ` (${cat.triggers.regressions} regression${cat.triggers.regressions === 1 ? "" : "s"})`
+      : "";
+    lines.push(`- Quality: ${pct}% trigger pass rate${regNote}`);
+  }
+  if (cat.metabolic && !cat.metabolic.healthy) {
+    lines.push(`- Metabolic: ${cat.metabolic.anomalies}`);
+  }
+  if (cat.desiredState && cat.desiredState.score < 1) {
+    const pct = Math.round(cat.desiredState.score * 100);
+    lines.push(`- Desired state: ${pct}% of targets met (${cat.desiredState.metCount}/${cat.desiredState.total})`);
   }
   for (const signal of cat.other.slice(0, 2)) {
     lines.push(`- ${signal.summary}`);

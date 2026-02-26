@@ -27,7 +27,7 @@ import type {
   SessionFrame,
   IntentRequest,
 } from "@intent-computer/architecture";
-import { LocalPerceptionAdapter } from "../local-perception.js";
+import { LocalPerceptionAdapter, type LocalPerceptionOptions } from "../local-perception.js";
 import { LocalIdentityAdapter } from "../local-identity.js";
 import { LocalCommitmentAdapter } from "../local-commitment.js";
 import { LocalMemoryAdapter } from "../local-memory.js";
@@ -168,7 +168,10 @@ export async function runSessionStartLoop(
 
   try {
     // ─── Perception ───────────────────────────────────────────────────────
-    const perceptionAdapter = new LocalPerceptionAdapter(vaultRoot);
+    // Session-start is advisory — don't write trigger history on every session
+    const perceptionAdapter = new LocalPerceptionAdapter(vaultRoot, {
+      recordTriggerHistory: false,
+    });
     let perception: PerceptionSnapshot;
     try {
       perception = await Promise.race([

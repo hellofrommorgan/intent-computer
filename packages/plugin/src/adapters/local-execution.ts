@@ -18,6 +18,7 @@ import type {
   ExecutionPort,
   ExecutionRunInput,
   PerceptionSignal,
+  Proposition,
 } from "@intent-computer/architecture";
 
 export interface LocalExecutionDispatch {
@@ -52,6 +53,8 @@ const DEFAULT_POLICY: LocalExecutionPolicy = {
     mine_sessions: false,
     advance_commitment: false,
     seed_knowledge: false,
+    fix_triggers: false,
+    fix_regressions: false,
     custom: false,
   },
 };
@@ -89,18 +92,25 @@ export class LocalExecutionAdapter implements ExecutionPort {
       });
     }
 
+    const propositions = input.memory.propositions;
+
     for (const gap of input.commitment.protectedGaps) {
       priority++;
-      actions.push(this.gapToAction(gap.label, gap.evidence, priority));
+      actions.push(this.gapToAction(gap.label, gap.evidence, priority, propositions));
     }
 
     for (const commitment of input.commitment.activeCommitments) {
       if (commitment.horizon === "session") {
         priority++;
+        const relatedProps = this.findRelatedPropositions(commitment.label, propositions);
+        const baseReason = `Session-horizon commitment at priority ${commitment.priority}`;
+        const reason = relatedProps.length > 0
+          ? `${baseReason} — related thoughts: ${relatedProps.map(p => `[[${p.title}]]`).join(", ")}`
+          : baseReason;
         actions.push({
           id: randomUUID(),
           label: `Advance: ${commitment.label}`,
-          reason: `Session-horizon commitment at priority ${commitment.priority}`,
+          reason,
           authorityNeeded: "advisory",
           requiresPermission: false,
           priority,
@@ -127,7 +137,7 @@ export class LocalExecutionAdapter implements ExecutionPort {
     }
 
     if (
-      input.memory.propositions.length === 0 &&
+      propositions.length === 0 &&
       input.commitment.activeCommitments.length > 0
     ) {
       priority++;
@@ -135,6 +145,23 @@ export class LocalExecutionAdapter implements ExecutionPort {
         id: randomUUID(),
         label: "Seed knowledge for active commitments",
         reason: "No existing thoughts found related to active commitments",
+        authorityNeeded: "advisory",
+        requiresPermission: false,
+        priority,
+        actionKey: "seed_knowledge",
+      });
+    } else if (
+      propositions.length > 0 &&
+      input.commitment.activeCommitments.length > 0 &&
+      propositions.length <= 3
+    ) {
+      // Few propositions exist — mention them as starting points if seed is warranted
+      const titles = propositions.slice(0, 3).map(p => `[[${p.title}]]`).join(", ");
+      priority++;
+      actions.push({
+        id: randomUUID(),
+        label: "Seed knowledge for active commitments",
+        reason: `Only ${propositions.length} related thought(s) found — starting points: ${titles}`,
         authorityNeeded: "advisory",
         requiresPermission: false,
         priority,
@@ -198,7 +225,7 @@ export class LocalExecutionAdapter implements ExecutionPort {
     };
   }
 
-  private gapToAction(label: string, evidence: string[], priority: number): ActionProposal {
+  private gapToAction(label: string, evidence: string[], priority: number, propositions?: Proposition[]): ActionProposal {
     const gapActions: Record<
       string,
       {
@@ -233,7 +260,6 @@ export class LocalExecutionAdapter implements ExecutionPort {
         authority: "delegated",
         key: "mine_sessions",
       },
-      // Fix 4: New gap-to-action mappings
       "link-health": {
         label: "Fix dangling wiki links",
         authority: "advisory",
@@ -249,18 +275,135 @@ export class LocalExecutionAdapter implements ExecutionPort {
         authority: "advisory",
         key: "custom",
       },
+      // Trigger feedback loop
+      "quality-triggers": {
+        label: "Review and fix failing quality triggers",
+        authority: "advisory",
+        key: "fix_triggers",
+      },
+      "quality-regression": {
+        label: "Fix quality regressions — previously passing triggers now failing",
+        authority: "advisory",
+        key: "fix_regressions",
+        requiresPermission: true,
+      },
+      // Metabolic anomalies → elevate relevant existing actions
+      "metabolic-identity": {
+        label: "Identity churn — review self/ for excessive changes",
+        authority: "advisory",
+        key: "custom",
+        requiresPermission: true,
+      },
+      "metabolic-pipeline": {
+        label: "Pipeline stalled — process inbox to resume thought creation",
+        authority: "delegated",
+        key: "process_inbox",
+      },
+      "metabolic-disuse": {
+        label: "System disuse — vault has had no activity this week",
+        authority: "advisory",
+        key: "custom",
+      },
+      "metabolic-ops": {
+        label: "Operational silence — triage observations to resume ops activity",
+        authority: "advisory",
+        key: "triage_observations",
+      },
     };
 
-    const mapping = gapActions[label];
+    // Static lookup first, then handle desired:* prefix gaps
+    let mapping = gapActions[label];
+
+    if (!mapping && label.startsWith("desired:")) {
+      type GapMapping = { label: string; authority: "advisory" | "delegated"; key: ActionKey; requiresPermission?: boolean };
+      const metric = label.slice("desired:".length);
+      const desiredActions: Record<string, GapMapping> = {
+        "orphan-rate": { label: "Connect orphans to reduce orphan rate toward target", authority: "delegated", key: "connect_orphans" },
+        "connection-density": { label: "Improve connection density by adding wiki links", authority: "advisory", key: "connect_orphans" },
+        "schema-compliance": { label: "Fix schema compliance to meet desired state target", authority: "advisory", key: "custom" },
+        "description-quality": { label: "Improve thought descriptions to meet quality target", authority: "advisory", key: "custom" },
+        "inbox-age": { label: "Process stale inbox items", authority: "delegated", key: "process_inbox" },
+      };
+      mapping = desiredActions[metric] ?? (metric.startsWith("status-distribution")
+        ? { label: "Adjust thought status distribution toward targets", authority: "advisory" as const, key: "custom" as const }
+        : undefined);
+    }
+
+    const baseLabel = mapping?.label ?? `Address: ${label}`;
+    const baseReason = evidence.join("; ");
+    const memoryEnrichment = this.enrichWithMemory(mapping?.key ?? "custom", label, propositions);
+
     return {
       id: randomUUID(),
-      label: mapping?.label ?? `Address: ${label}`,
-      reason: evidence.join("; "),
+      label: memoryEnrichment ? `${baseLabel} — ${memoryEnrichment}` : baseLabel,
+      reason: baseReason,
       authorityNeeded: mapping?.authority ?? "advisory",
       requiresPermission: mapping?.requiresPermission ?? false,
       priority,
       actionKey: mapping?.key ?? "custom",
     };
+  }
+
+  /**
+   * Find propositions relevant to a given label by keyword overlap.
+   * Returns up to 3 matching propositions.
+   */
+  private findRelatedPropositions(label: string, propositions?: Proposition[]): Proposition[] {
+    if (!propositions || propositions.length === 0) return [];
+
+    const keywords = label.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    if (keywords.length === 0) return [];
+
+    return propositions
+      .filter(p => {
+        const searchable = [p.title, p.description, ...p.topics].join(" ").toLowerCase();
+        return keywords.some(kw => searchable.includes(kw));
+      })
+      .slice(0, 3);
+  }
+
+  /**
+   * Produce a brief memory-context enrichment string for a gap action.
+   * Returns null if no propositions match or none are provided.
+   */
+  private enrichWithMemory(
+    actionKey: ActionKey | string,
+    gapLabel: string,
+    propositions?: Proposition[],
+  ): string | null {
+    if (!propositions || propositions.length === 0) return null;
+
+    try {
+      switch (actionKey) {
+        case "connect_orphans": {
+          const related = this.findRelatedPropositions(gapLabel, propositions);
+          if (related.length > 0) {
+            return `${related.length} thought(s) may relate: ${related.map(p => `[[${p.title}]]`).join(", ")}`;
+          }
+          // Fall back: mention total available propositions as context
+          if (propositions.length > 0) {
+            return `${propositions.length} active thought(s) available for linking`;
+          }
+          return null;
+        }
+        case "process_inbox": {
+          if (propositions.length > 0) {
+            const titles = propositions.slice(0, 2).map(p => `[[${p.title}]]`).join(", ");
+            return `may connect to ${titles}`;
+          }
+          return null;
+        }
+        default: {
+          const related = this.findRelatedPropositions(gapLabel, propositions);
+          if (related.length > 0) {
+            return `${related.length} related thought(s): ${related.map(p => `[[${p.title}]]`).join(", ")}`;
+          }
+          return null;
+        }
+      }
+    } catch {
+      return null;
+    }
   }
 
   // Fix 3: Remove dead _suffix parameter

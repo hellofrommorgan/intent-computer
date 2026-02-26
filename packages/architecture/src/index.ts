@@ -14,3 +14,5 @@ export * from "./ops-config.js";
 export * from "./slug.js";
 export * from "./graph-links.js";
 export * from "./evaluation.js";
+export * from "./qmd-bridge.js";
+export * from "./graph-traversal.js";

@@ -1,0 +1,19 @@
+maintenance:
+  conditions:
+    inbox_threshold: 1
+    orphan_threshold: 3
+    observation_threshold: 10
+    tension_threshold: 5
+    unprocessed_sessions: 5
+    stale_days: 30
+
+desired_state:
+  max_orphan_rate: 0.15
+  min_connection_density: 3.0
+  min_schema_compliance: 0.9
+  min_description_quality: 0.85
+  inbox_max_age_days: 7
+  status_distribution:
+    seed: 0.3
+    growing: 0.5
+    evergreen: 0.2

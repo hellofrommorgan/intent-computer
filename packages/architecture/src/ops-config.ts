@@ -193,3 +193,88 @@ export function countUnprocessedMineableSessions(dir: string): number {
 export function defaultMaintenanceThresholds(): MaintenanceThresholds {
   return { ...DEFAULT_THRESHOLDS };
 }
+
+// ─── Desired State Configuration ─────────────────────────────────────────────
+
+export interface DesiredState {
+  /** Max orphan rate as fraction (0-1), default 0.15 */
+  maxOrphanRate: number;
+  /** Min average connections per thought, default 3.0 */
+  minConnectionDensity: number;
+  /** Min schema compliance as fraction (0-1), default 0.9 */
+  minSchemaCompliance: number;
+  /** Min description quality (non-restatement) as fraction (0-1), default 0.85 */
+  minDescriptionQuality: number;
+  /** Max days an inbox item should sit unprocessed, default 7 */
+  inboxMaxAgeDays: number;
+  /** Target status distribution */
+  statusDistribution: {
+    /** Target seed percentage (0-1), default 0.3 */
+    seed: number;
+    /** Target growing percentage (0-1), default 0.5 */
+    growing: number;
+    /** Target evergreen percentage (0-1), default 0.2 */
+    evergreen: number;
+  };
+}
+
+export const DEFAULT_DESIRED_STATE: DesiredState = {
+  maxOrphanRate: 0.15,
+  minConnectionDensity: 3.0,
+  minSchemaCompliance: 0.9,
+  minDescriptionQuality: 0.85,
+  inboxMaxAgeDays: 7,
+  statusDistribution: { seed: 0.3, growing: 0.5, evergreen: 0.2 },
+};
+
+export function loadDesiredState(
+  vaultRoot: string,
+  configPath?: string,
+): DesiredState {
+  const path = configPath ?? join(vaultRoot, "ops", "config.yaml");
+  if (!existsSync(path)) return { ...DEFAULT_DESIRED_STATE };
+
+  try {
+    const content = readFileSync(path, "utf-8");
+    const scalars = parseYamlScalars(content);
+
+    return {
+      maxOrphanRate: readNumber(
+        scalars["desired_state.max_orphan_rate"],
+        DEFAULT_DESIRED_STATE.maxOrphanRate,
+      ),
+      minConnectionDensity: readNumber(
+        scalars["desired_state.min_connection_density"],
+        DEFAULT_DESIRED_STATE.minConnectionDensity,
+      ),
+      minSchemaCompliance: readNumber(
+        scalars["desired_state.min_schema_compliance"],
+        DEFAULT_DESIRED_STATE.minSchemaCompliance,
+      ),
+      minDescriptionQuality: readNumber(
+        scalars["desired_state.min_description_quality"],
+        DEFAULT_DESIRED_STATE.minDescriptionQuality,
+      ),
+      inboxMaxAgeDays: readNumber(
+        scalars["desired_state.inbox_max_age_days"],
+        DEFAULT_DESIRED_STATE.inboxMaxAgeDays,
+      ),
+      statusDistribution: {
+        seed: readNumber(
+          scalars["desired_state.status_distribution.seed"],
+          DEFAULT_DESIRED_STATE.statusDistribution.seed,
+        ),
+        growing: readNumber(
+          scalars["desired_state.status_distribution.growing"],
+          DEFAULT_DESIRED_STATE.statusDistribution.growing,
+        ),
+        evergreen: readNumber(
+          scalars["desired_state.status_distribution.evergreen"],
+          DEFAULT_DESIRED_STATE.statusDistribution.evergreen,
+        ),
+      },
+    };
+  } catch {
+    return { ...DEFAULT_DESIRED_STATE };
+  }
+}

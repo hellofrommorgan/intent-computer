@@ -291,6 +291,10 @@ export class LocalCommitmentAdapter implements CommitmentPort {
    * Compressed gaps (incidental): issues that are real but can be deferred
    * if they don't align with active commitments — orphans, session backlog,
    * observation triaging.
+   *
+   * Desired-state gaps (desired:*) arrive pre-classified from perception:
+   * constitutive for structural metrics (schema-compliance, connection-density),
+   * incidental for others. This classification is respected as-is.
    */
   private classifyGaps(
     gaps: DetectedGap[],
