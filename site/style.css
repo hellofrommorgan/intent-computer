@@ -356,6 +356,7 @@ hr {
   border-radius: 4px;
   overflow-x: auto;
   margin: 1rem 0;
+  white-space: pre;
 }
 .code-block .cm { color: #6B6560; }
 .code-block .kw { color: #A8A29E; }
