@@ -11,7 +11,7 @@ Most agent tooling treats the human as a prompt engineer and the agent as a stat
 - **Intent is the primitive, not instructions.** The system does not execute commands. It receives intent -- a statement of what you want to be true -- and routes it through perception, identity, commitment, memory, and execution. Every computation traces back to a human reason.
 - **Persistent identity and memory across sessions.** The agent reads its identity before loading capabilities. Working memory, goals, and context survive session boundaries. Session N+1 starts where session N left off.
 - **Files are the canonical state.** Markdown, YAML frontmatter, wiki links, git history. Human-readable, version-controlled, portable. No database. No proprietary format. The filesystem is the database; ripgrep is the query engine.
-- **Amplifies intent without generating it.** The system never invents its own reasons to act. It is a bicycle for the mind -- it makes your thinking faster and more connected, but the direction is always yours.
+- **Amplifies intent without generating it.** The system never invents its own reasons to act. It is a motorcycle for the mind -- it makes your thinking faster and more connected, but the direction is always yours.
 
 ## Architecture
 
